@@ -2,6 +2,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api import voice
+
 app = FastAPI(
     title="Mini Jarvis API",
     description="Low-latency voice assistant backend",
@@ -17,6 +19,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Include routers
+app.include_router(voice.router, prefix="/api/voice", tags=["voice"])
+
 
 @app.get("/")
 async def root():
@@ -26,3 +31,4 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "healthy"}
+
