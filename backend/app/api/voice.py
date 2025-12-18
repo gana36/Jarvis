@@ -5,6 +5,7 @@ from fastapi import APIRouter, File, UploadFile, HTTPException
 from pydantic import BaseModel
 
 from app.services.stt import get_stt_service
+from app.services.gemini import get_gemini_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -17,6 +18,7 @@ class IngestResponse(BaseModel):
     message: str
     audio_size_bytes: int
     transcript: str
+    ai_response: str
 
 
 @router.post("/ingest", response_model=IngestResponse)
@@ -61,16 +63,36 @@ async def ingest_audio(audio: UploadFile = File(...)):
         
         logger.info(f"Transcription complete: '{transcript}'")
         
+        # Generate AI response using Gemini Flash
+        ai_response = ""
+        if transcript:
+            try:
+                gemini_service = get_gemini_service()
+                ai_response = await gemini_service.generate_response(transcript)
+            except ValueError as e:
+                # API key not configured
+                logger.warning(f"Gemini not configured: {e}")
+                ai_response = "AI responses not configured."
+            except Exception as e:
+                logger.error(f"Gemini generation failed: {e}")
+                ai_response = "I'm having trouble thinking right now."
+        else:
+            ai_response = "I didn't catch that. Could you repeat?"
+        
         return IngestResponse(
             success=True,
-            message="Audio transcribed successfully",
+            message="Audio processed successfully",
             audio_size_bytes=audio_size,
             transcript=transcript,
+            ai_response=ai_response,
         )
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
     except Exception as e:
-        logger.error(f"Transcription failed: {e}")
+        logger.error(f"Processing failed: {e}")
         raise HTTPException(
             status_code=500,
-            detail=f"Transcription failed: {str(e)}"
+            detail=f"Audio processing failed: {str(e)}"
         )
 

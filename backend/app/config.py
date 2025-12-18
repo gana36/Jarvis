@@ -12,6 +12,12 @@ class Settings(BaseSettings):
 
     # Google Cloud credentials as JSON string
     google_credentials_json: str | None = None
+    
+    # Google Cloud project ID
+    google_project_id: str | None = None
+    
+    # Gemini API key for conversational AI
+    gemini_api_key: str | None = None
 
     class Config:
         env_file = ".env"
