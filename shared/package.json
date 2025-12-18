@@ -1,0 +1,14 @@
+{
+    "name": "@mini-jarvis/shared",
+    "version": "0.1.0",
+    "private": true,
+    "type": "module",
+    "main": "./typescript/index.ts",
+    "types": "./typescript/index.ts",
+    "scripts": {
+        "type-check": "tsc --noEmit"
+    },
+    "devDependencies": {
+        "typescript": "^5.2.2"
+    }
+}
