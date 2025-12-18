@@ -25,20 +25,24 @@ class TTSService:
         self.voice_id = voice_id
         logger.info(f"✓ ElevenLabs TTS service initialized with voice: {voice_id}")
 
-    def text_to_speech(self, text: str) -> bytes:
+    def text_to_speech(self, text: str, voice_id: str | None = None) -> bytes:
         """
         Convert text to speech audio.
         
         Args:
             text: Text to convert to speech
+            voice_id: Optional voice ID (uses instance default if not provided)
             
         Returns:
             Audio bytes (MP3 format)
         """
         try:
+            # Use provided voice or fall back to instance default
+            voice = voice_id or self.voice_id
+            
             # Generate audio using streaming API (collects all chunks)
             audio_generator = self.client.text_to_speech.convert(
-                voice_id=self.voice_id,
+                voice_id=voice,
                 text=text,
                 model_id="eleven_turbo_v2_5",  # Fastest model
                 output_format="mp3_44100_128",  # Good quality, reasonable size
@@ -47,25 +51,67 @@ class TTSService:
             # Collect all audio chunks
             audio_bytes = b"".join(audio_generator)
             
-            logger.info(f"✓ Generated {len(audio_bytes)} bytes of audio for text: '{text[:50]}...'")
+            logger.info(f"✓ Generated {len(audio_bytes)} bytes of audio for text: '{text[:50]}...' with voice: {voice}")
             return audio_bytes
             
         except Exception as e:
             logger.error(f"TTS generation failed: {e}")
             raise
 
-    def text_to_speech_base64(self, text: str) -> str:
+    def text_to_speech_base64(self, text: str, voice_id: str | None = None) -> str:
         """
         Convert text to speech and encode as base64.
         
         Args:
             text: Text to convert to speech
+            voice_id: Optional voice ID (uses instance default if not provided)
             
         Returns:
             Base64-encoded audio string
         """
-        audio_bytes = self.text_to_speech(text)
+        audio_bytes = self.text_to_speech(text, voice_id=voice_id)
         return base64.b64encode(audio_bytes).decode('utf-8')
+
+    def text_to_speech_stream(self, text_stream, voice_id: str | None = None):
+        """
+        Convert streaming text to streaming audio.
+        
+        Args:
+            text_stream: Async generator yielding text chunks
+            voice_id: Optional voice ID (uses instance default if not provided)
+            
+        Yields:
+            Audio bytes chunks
+        """
+        try:
+            # Use provided voice or fall back to instance default
+            voice = voice_id or self.voice_id
+            
+            # Convert async generator to regular generator for ElevenLabs
+            def text_iterator():
+                """Collect all text chunks before sending to TTS"""
+                full_text = ""
+                for chunk in text_stream:
+                    full_text += chunk
+                    yield chunk
+                logger.info(f"✓ Streaming TTS for: '{full_text[:50]}...' with voice: {voice}")
+            
+            # Stream audio using ElevenLabs streaming API
+            audio_stream = self.client.text_to_speech.convert(
+                voice_id=voice,
+                text=text_iterator(),
+                model_id="eleven_turbo_v2_5",
+                output_format="mp3_44100_128",
+                optimize_streaming_latency=4,  # Maximum latency optimization
+            )
+            
+            # Yield audio chunks as they're generated
+            for audio_chunk in audio_stream:
+                yield audio_chunk
+                
+        except Exception as e:
+            logger.error(f"Streaming TTS failed: {e}")
+            raise
 
 
 @lru_cache

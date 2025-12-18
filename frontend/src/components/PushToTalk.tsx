@@ -2,11 +2,28 @@ import { useState, useRef, useEffect } from 'react';
 
 type RecordingState = 'idle' | 'recording' | 'processing' | 'playing';
 
+interface Voice {
+    id: string;
+    name: string;
+    description: string;
+}
+
+const VOICES: Voice[] = [
+    { id: '21m00Tcm4TlvDq8ikWAM', name: 'Rachel', description: 'Neutral American female' },
+    { id: 'pNInz6obpgDQGcFmaJgB', name: 'Adam', description: 'Deep American male' },
+    { id: 'ErXwobaYiN019PkySvjV', name: 'Antoni', description: 'Well-rounded male' },
+    { id: 'TxGEqnHWrfWFTfGW9XjX', name: 'Josh', description: 'Young American male' },
+    { id: 'VR6AewLTigWG4xSOukaG', name: 'Arnold', description: 'Crisp male' },
+    { id: 'AZnzlk1XvdvUeBnXmlld', name: 'Domi', description: 'Strong female' },
+    { id: 'MF3mGyEYCl7XYWbV9V6O', name: 'Elli', description: 'Emotional female' },
+];
+
 export default function PushToTalk() {
     const [state, setState] = useState<RecordingState>('idle');
     const [error, setError] = useState<string | null>(null);
     const [transcript, setTranscript] = useState<string>('');
     const [aiResponse, setAiResponse] = useState<string>('');
+    const [selectedVoice, setSelectedVoice] = useState<string>(VOICES[0].id);
 
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
     const audioChunksRef = useRef<Blob[]>([]);
@@ -29,32 +46,21 @@ export default function PushToTalk() {
             setTranscript('');
             setAiResponse('');
 
-            // Request microphone access
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
-            // Create MediaRecorder with webm format
-            const mediaRecorder = new MediaRecorder(stream, {
-                mimeType: 'audio/webm',
-            });
+            const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
 
             mediaRecorderRef.current = mediaRecorder;
             audioChunksRef.current = [];
 
-            // Collect audio chunks
             mediaRecorder.ondataavailable = (event) => {
                 if (event.data.size > 0) {
                     audioChunksRef.current.push(event.data);
                 }
             };
 
-            // Handle recording stop
             mediaRecorder.onstop = async () => {
                 const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-
-                // Stop all tracks
                 stream.getTracks().forEach(track => track.stop());
-
-                // Upload to backend
                 await uploadAudio(audioBlob);
             };
 
@@ -78,6 +84,7 @@ export default function PushToTalk() {
         try {
             const formData = new FormData();
             formData.append('audio', audioBlob, 'recording.webm');
+            formData.append('voice_id', selectedVoice);
 
             const response = await fetch('/api/voice/ingest', {
                 method: 'POST',
@@ -91,7 +98,6 @@ export default function PushToTalk() {
             const result = await response.json();
             console.log('Upload successful:', result);
 
-            // Display transcript and AI response
             if (result.transcript) {
                 setTranscript(result.transcript);
             }
@@ -99,10 +105,8 @@ export default function PushToTalk() {
                 setAiResponse(result.ai_response);
             }
 
-            // Play TTS audio if available
             if (result.audio_base64) {
                 try {
-                    // Decode base64 to audio
                     const audioData = atob(result.audio_base64);
                     const audioArray = new Uint8Array(audioData.length);
                     for (let i = 0; i < audioData.length; i++) {
@@ -111,7 +115,6 @@ export default function PushToTalk() {
                     const audioBlob = new Blob([audioArray], { type: 'audio/mpeg' });
                     const audioUrl = URL.createObjectURL(audioBlob);
 
-                    // Create audio element and play
                     const audio = new Audio(audioUrl);
                     audioRef.current = audio;
 
@@ -127,7 +130,6 @@ export default function PushToTalk() {
                     };
 
                     setState('playing');
-                    // Audio will auto-play via useEffect
                 } catch (err) {
                     console.error('Error decoding audio:', err);
                     setState('idle');
@@ -169,6 +171,34 @@ export default function PushToTalk() {
 
     return (
         <div>
+            {/* Voice Selection */}
+            <div style={{ marginBottom: '16px' }}>
+                <label htmlFor="voice-select" style={{ fontSize: '14px', color: '#666', marginBottom: '8px', display: 'block' }}>
+                    Select Voice:
+                </label>
+                <select
+                    id="voice-select"
+                    value={selectedVoice}
+                    onChange={(e) => setSelectedVoice(e.target.value)}
+                    disabled={state !== 'idle'}
+                    style={{
+                        width: '100%',
+                        padding: '12px',
+                        fontSize: '14px',
+                        borderRadius: '8px',
+                        border: '1px solid #d1d5db',
+                        backgroundColor: state !== 'idle' ? '#f3f4f6' : 'white',
+                        cursor: state !== 'idle' ? 'not-allowed' : 'pointer',
+                    }}
+                >
+                    {VOICES.map(voice => (
+                        <option key={voice.id} value={voice.id}>
+                            {voice.name} - {voice.description}
+                        </option>
+                    ))}
+                </select>
+            </div>
+
             <button
                 onMouseDown={handleMouseDown}
                 onMouseUp={handleMouseUp}
