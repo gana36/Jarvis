@@ -22,6 +22,8 @@ class IngestResponse(BaseModel):
     transcript: str
     ai_response: str
     audio_base64: str | None = None  # Base64-encoded audio from TTS
+    intent: str | None = None  # Classified intent
+    confidence: float | None = None  # Classification confidence
 
 
 @router.post("/ingest", response_model=IngestResponse)
@@ -70,13 +72,19 @@ async def ingest_audio(
         
         logger.info(f"Transcription complete: '{transcript}'")
         
-        # Generate AI response using Gemini Flash
+        # Classify intent and generate AI response
         ai_response = ""
         audio_base64 = None
+        intent_result = None
         
         if transcript:
             try:
                 gemini_service = get_gemini_service()
+                
+                # Classify intent first
+                intent_result = await gemini_service.classify_intent(transcript)
+                
+                # Generate conversational response
                 ai_response = await gemini_service.generate_response(transcript)
                 
                 # Convert AI response to speech
@@ -108,6 +116,8 @@ async def ingest_audio(
             transcript=transcript,
             ai_response=ai_response,
             audio_base64=audio_base64,
+            intent=intent_result.get("intent") if intent_result else None,
+            confidence=intent_result.get("confidence") if intent_result else None,
         )
     except HTTPException:
         # Re-raise HTTP exceptions

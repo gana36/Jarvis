@@ -111,6 +111,56 @@ Assistant:"""
             logger.error(f"Gemini streaming error: {e}")
             yield "I'm having trouble thinking right now."
 
+    async def classify_intent(self, user_message: str) -> dict:
+        """
+        Classify user intent using minimal prompt for speed.
+        
+        Args:
+            user_message: User's transcribed message
+            
+        Returns:
+            Dict with 'intent' and 'confidence' fields
+        """
+        try:
+            # Ultra-minimal prompt for speed
+            prompt = f"""Classify intent. Return JSON only.
+
+Input: "{user_message}"
+
+Intents: GET_WEATHER, ADD_TASK, DAILY_SUMMARY, LEARN, GENERAL_CHAT
+
+Output format:
+{{"intent": "INTENT_NAME", "confidence": 0.95}}"""
+
+            # Generate with minimal tokens for speed
+            response = self.model.generate_content(
+                prompt,
+                generation_config={
+                    "temperature": 0.1,  # Low temp for consistent classification
+                    "max_output_tokens": 50,  # Very small for JSON only
+                }
+            )
+            
+            # Parse JSON response
+            import json
+            response_text = response.text.strip()
+            
+            # Extract JSON if wrapped in markdown
+            if "```json" in response_text:
+                response_text = response_text.split("```json")[1].split("```")[0].strip()
+            elif "```" in response_text:
+                response_text = response_text.split("```")[1].split("```")[0].strip()
+            
+            result = json.loads(response_text)
+            logger.info(f"Intent classified: {result['intent']} (confidence: {result['confidence']})")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Intent classification failed: {e}")
+            # Fallback to generic chat
+            return {"intent": "GENERAL_CHAT", "confidence": 0.5}
+
+
 
 @lru_cache
 def get_gemini_service() -> GeminiService:

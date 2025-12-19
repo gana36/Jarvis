@@ -44,8 +44,14 @@ class TTSService:
             audio_generator = self.client.text_to_speech.convert(
                 voice_id=voice,
                 text=text,
-                model_id="eleven_turbo_v2_5",  # Fastest model
+                model_id="eleven_turbo_v2",  # Standard turbo (not v2_5 which is too fast)
                 output_format="mp3_44100_128",  # Good quality, reasonable size
+                voice_settings={
+                    "stability": 0.5,  # Balance between consistency and expressiveness
+                    "similarity_boost": 0.75,  # Closer to original voice
+                    "style": 0.0,  # No style exaggeration
+                    "use_speaker_boost": True,  # Better clarity
+                }
             )
             
             # Collect all audio chunks
@@ -100,9 +106,15 @@ class TTSService:
             audio_stream = self.client.text_to_speech.convert(
                 voice_id=voice,
                 text=text_iterator(),
-                model_id="eleven_turbo_v2_5",
+                model_id="eleven_turbo_v2",  # Standard turbo for natural pacing
                 output_format="mp3_44100_128",
-                optimize_streaming_latency=4,  # Maximum latency optimization
+                voice_settings={
+                    "stability": 0.5,
+                    "similarity_boost": 0.75,
+                    "style": 0.0,
+                    "use_speaker_boost": True,
+                },
+                optimize_streaming_latency=3,  # Optimize but not maximum
             )
             
             # Yield audio chunks as they're generated
