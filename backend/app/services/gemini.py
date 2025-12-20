@@ -127,7 +127,7 @@ Assistant:"""
 
 Input: "{user_message}"
 
-Intents: GET_WEATHER, ADD_TASK, DAILY_SUMMARY, DELETE_CALENDAR_EVENT, LEARN, GENERAL_CHAT
+Intents: GET_WEATHER, ADD_TASK, DAILY_SUMMARY, CREATE_CALENDAR_EVENT, UPDATE_CALENDAR_EVENT, DELETE_CALENDAR_EVENT, LEARN, GENERAL_CHAT
 
 Output format:
 {{"intent": "INTENT_NAME", "confidence": 0.95}}"""
@@ -159,6 +159,126 @@ Output format:
             logger.error(f"Intent classification failed: {e}")
             # Fallback to generic chat
             return {"intent": "GENERAL_CHAT", "confidence": 0.5}
+
+    async def extract_calendar_event(self, user_message: str) -> dict:
+        """
+        Extract calendar event details from natural language.
+        
+        Args:
+            user_message: User's request (e.g., "create movie event at 6pm today")
+            
+        Returns:
+            Dict with 'title', 'hour', 'minute', 'am_pm' fields
+            Example: {"title": "movie", "hour": 18, "minute": 0, "am_pm": "pm"}
+        """
+        try:
+            from datetime import datetime
+            
+            # Get current time for context
+            now = datetime.now()
+            current_time = now.strftime("%I:%M %p")
+            current_date = now.strftime("%Y-%m-%d")
+            
+            # Minimal prompt for fast extraction
+            prompt = f"""Extract calendar event details. Return JSON only.
+
+Current time: {current_time}
+Current date: {current_date}
+
+Input: "{user_message}"
+
+Extract:
+- title: event name (clean, no articles like "a", "the")
+- hour: hour in 24-hour format (0-23)
+- minute: minute (0-59)
+
+Output format:
+{{"title": "event name", "hour": 18, "minute": 0}}"""
+
+            # Generate with minimal tokens for speed
+            response = self.model.generate_content(
+                prompt,
+                generation_config={
+                    "temperature": 0.0,  # Deterministic extraction
+                    "max_output_tokens": 100,  # Small JSON only
+                }
+            )
+            
+            # Parse JSON response
+            import json
+            response_text = response.text.strip()
+            
+            # Extract JSON if wrapped in markdown
+            if "```json" in response_text:
+                response_text = response_text.split("```json")[1].split("```")[0].strip()
+            elif "```" in response_text:
+                response_text = response_text.split("```")[1].split("```")[0].strip()
+            
+            result = json.loads(response_text)
+            logger.info(f"Extracted event: {result}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Event extraction failed: {e}")
+            # Fallback to defaults
+            return {"title": "New Event", "hour": datetime.now().hour + 1, "minute": 0}
+
+    async def extract_calendar_update(self, user_message: str) -> dict:
+        """
+        Extract calendar update details from natural language.
+        
+        Args:
+            user_message: User's request (e.g., "change movie to 7pm")
+            
+        Returns:
+            Dict with 'event_name', 'new_title', 'new_hour', 'new_minute'
+        """
+        try:
+            from datetime import datetime
+            
+            now = datetime.now()
+            current_time = now.strftime("%I:%M %p")
+            
+            # Minimal prompt for fast extraction
+            prompt = f"""Extract calendar update details. Return JSON only.
+
+Current time: {current_time}
+
+Input: "{user_message}"
+
+Extract:
+- event_name: which event to update (e.g., "movie", "lunch")
+- new_title: new event name if changing (null if not changing)
+- new_hour: new hour in 24-hour format if changing (null if not changing)
+- new_minute: new minute if changing (null if not changing)
+
+Output format:
+{{"event_name": "movie", "new_title": null, "new_hour": 19, "new_minute": 0}}"""
+
+            response = self.model.generate_content(
+                prompt,
+                generation_config={
+                    "temperature": 0.0,
+                    "max_output_tokens": 100,
+                }
+            )
+            
+            import json
+            response_text = response.text.strip()
+            
+            if "```json" in response_text:
+                response_text = response_text.split("```json")[1].split("```")[0].strip()
+            elif "```" in response_text:
+                response_text = response_text.split("```")[1].split("```")[0].strip()
+            
+            result = json.loads(response_text)
+            logger.info(f"Extracted update: {result}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Update extraction failed: {e}")
+            return {"event_name": None, "new_title": None, "new_hour": None, "new_minute": None}
+
 
 
 

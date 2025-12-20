@@ -132,6 +132,8 @@ class OrchestratorService:
             "GET_WEATHER": self._handle_get_weather,
             "ADD_TASK": self._handle_add_task,
             "DAILY_SUMMARY": self._handle_daily_summary,
+            "CREATE_CALENDAR_EVENT": self._handle_create_calendar_event,
+            "UPDATE_CALENDAR_EVENT": self._handle_update_calendar_event,
             "DELETE_CALENDAR_EVENT": self._handle_delete_calendar_event,
             "LEARN": self._handle_learn,
             "GENERAL_CHAT": self._handle_general_chat,
@@ -255,6 +257,196 @@ class OrchestratorService:
             },
             "message": "Today you completed 5 tasks and attended 2 meetings. Great progress!",
         }
+
+    async def _handle_create_calendar_event(self, transcript: str) -> Dict[str, Any]:
+        """
+        Handle calendar event creation requests.
+        
+        Args:
+            transcript: User's create request (e.g., "create movie event at 6pm today")
+            
+        Returns:
+            Creation confirmation or error
+        """
+        logger.info("Handler: CREATE_CALENDAR_EVENT")
+        
+        try:
+            from app.services.calendar_tool import get_calendar_tool
+            from datetime import datetime, timedelta
+            
+            calendar_tool = get_calendar_tool()
+            
+            # Use LLM to extract event details (reliable!)
+            logger.info(f"Extracting event details from: {transcript}")
+            event_details = await self.gemini_service.extract_calendar_event(transcript)
+            
+            summary = event_details.get('title', 'New Event')
+            hour = event_details.get('hour', datetime.now().hour + 1)
+            minute = event_details.get('minute', 0)
+            
+            # Create datetime for event
+            now = datetime.now()
+            start_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            
+            # If time is in the past, assume next day
+            if start_time < now:
+                start_time += timedelta(days=1)
+            
+            # Default duration: 1 hour
+            end_time = start_time + timedelta(hours=1)
+            
+            # Format for Google Calendar API (ISO format with timezone)
+            # Use timezone-aware datetime
+            from datetime import timezone, timedelta as td
+            
+            # Get local timezone offset
+            local_tz_offset = datetime.now().astimezone().strftime('%z')
+            # Format: -0500 -> -05:00
+            tz_formatted = f"{local_tz_offset[:3]}:{local_tz_offset[3:]}"
+            
+            start_iso = start_time.strftime(f"%Y-%m-%dT%H:%M:%S{tz_formatted}")
+            end_iso = end_time.strftime(f"%Y-%m-%dT%H:%M:%S{tz_formatted}")
+            
+            # Create the event
+            result = calendar_tool.create_event(
+                summary=summary,
+                start_time=start_iso,
+                end_time=end_iso
+            )
+            
+            if "error" in result:
+                return {
+                    "type": "calendar_create",
+                    "data": result,
+                    "message": f"Failed to create event: {result['error']}"
+                }
+            
+            # Format time for response
+            time_str = start_time.strftime("%I:%M %p").lstrip('0')
+            
+            return {
+                "type": "calendar_create",
+                "data": result,
+                "message": f"I've created '{summary}' in your calendar at {time_str} today."
+            }
+            
+        except Exception as e:
+            logger.error(f"Calendar creation failed: {e}")
+            return {
+                "type": "calendar_create",
+                "data": {"error": str(e)},
+                "message": "I had trouble creating that calendar event. Please try again."
+            }
+
+    async def _handle_update_calendar_event(self, transcript: str) -> Dict[str, Any]:
+        """
+        Handle calendar event update requests.
+        
+        Args:
+            transcript: User's update request (e.g., "change movie to 7pm")
+            
+        Returns:
+            Update confirmation or error
+        """
+        logger.info("Handler: UPDATE_CALENDAR_EVENT")
+        
+        try:
+            from app.services.calendar_tool import get_calendar_tool
+            from datetime import datetime, timedelta
+            
+            calendar_tool = get_calendar_tool()
+            
+            # Use LLM to extract update details
+            logger.info(f"Extracting update details from: {transcript}")
+            update_details = await self.gemini_service.extract_calendar_update(transcript)
+            
+            event_name = update_details.get('event_name')
+            if not event_name:
+                return {
+                    "type": "calendar_update",
+                    "data": {"error": "Could not identify which event to update"},
+                    "message": "I couldn't tell which event you want to update. Please specify the event name."
+                }
+            
+            # Find the event
+            events = calendar_tool.get_today_events()
+            matching_event = None
+            
+            for event in events:
+                if event_name.lower() in event.get('summary', '').lower():
+                    matching_event = event
+                    break
+            
+            if not matching_event:
+                event_names = [e.get('summary') for e in events]
+                return {
+                    "type": "calendar_update",
+                    "data": {"available_events": event_names},
+                    "message": f"I couldn't find '{event_name}'. Available events: {', '.join(event_names)}."
+                }
+            
+            # Build update params
+            new_title = update_details.get('new_title')
+            new_hour = update_details.get('new_hour')
+            new_minute = update_details.get('new_minute')
+            
+            # Format new time if provided
+            new_start_time = None
+            new_end_time = None
+            
+            if new_hour is not None:
+                now = datetime.now()
+                new_start = now.replace(hour=new_hour, minute=new_minute or 0, second=0, microsecond=0)
+                
+                if new_start < now:
+                    new_start += timedelta(days=1)
+                
+                # Format with timezone
+                local_tz_offset = datetime.now().astimezone().strftime('%z')
+                tz_formatted = f"{local_tz_offset[:3]}:{local_tz_offset[3:]}"
+                
+                new_start_time = new_start.strftime(f"%Y-%m-%dT%H:%M:%S{tz_formatted}")
+                new_end = new_start + timedelta(hours=1)
+                new_end_time = new_end.strftime(f"%Y-%m-%dT%H:%M:%S{tz_formatted}")
+            
+            # Update the event
+            result = calendar_tool.update_event(
+                event_id=matching_event['id'],
+                summary=new_title,
+                start_time=new_start_time,
+                end_time=new_end_time
+            )
+            
+            if "error" in result:
+                return {
+                    "type": "calendar_update",
+                    "data": result,
+                    "message": f"Failed to update event: {result['error']}"
+                }
+            
+            # Build response message
+            changes = []
+            if new_title:
+                changes.append(f"name to '{new_title}'")
+            if new_hour is not None:
+                time_str = new_start.strftime("%I:%M %p").lstrip('0')
+                changes.append(f"time to {time_str}")
+            
+            change_desc = " and ".join(changes) if changes else "the event"
+            
+            return {
+                "type": "calendar_update",
+                "data": result,
+                "message": f"I've updated '{matching_event['summary']}' - changed {change_desc}."
+            }
+            
+        except Exception as e:
+            logger.error(f"Calendar update failed: {e}")
+            return {
+                "type": "calendar_update",
+                "data": {"error": str(e)},
+                "message": "I had trouble updating that calendar event. Please try again."
+            }
 
     async def _handle_delete_calendar_event(self, transcript: str) -> Dict[str, Any]:
         """

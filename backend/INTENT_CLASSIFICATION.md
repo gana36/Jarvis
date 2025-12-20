@@ -7,6 +7,8 @@ Lightweight intent classifier using Gemini Flash for fast, accurate intent detec
 - `GET_WEATHER` - Weather queries
 - `ADD_TASK` - Task/reminder creation  
 - `DAILY_SUMMARY` - Daily summary requests
+- `CREATE_CALENDAR_EVENT` - Create calendar events
+- `UPDATE_CALENDAR_EVENT` - Update calendar events
 - `DELETE_CALENDAR_EVENT` - Delete calendar events
 - `LEARN` - Educational questions
 - `GENERAL_CHAT` - Casual conversation
