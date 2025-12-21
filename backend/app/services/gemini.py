@@ -111,6 +111,95 @@ Assistant:"""
             logger.error(f"Gemini streaming error: {e}")
             yield "I'm having trouble thinking right now."
 
+    async def classify_and_extract(self, user_message: str) -> dict:
+        """
+        Classify intent AND extract relevant details in a single LLM call.
+        
+        Args:
+            user_message: User's message
+            
+        Returns:
+            Dict with 'intent', 'confidence', and 'details' (null for simple intents)
+            
+        Example outputs:
+            Calendar: {"intent": "CREATE_CALENDAR_EVENT", "confidence": 0.95, 
+                      "details": {"title": "movie", "date": "2025-12-20", "hour": 18, "minute": 0, "duration": 60}}
+            Weather: {"intent": "GET_WEATHER", "confidence": 0.95, "details": null}
+        """
+        try:
+            from datetime import datetime
+            
+            # Get current context
+            now = datetime.now()
+            current_time = now.strftime("%I:%M %p")
+            current_date = now.strftime("%Y-%m-%d")
+            day_of_week = now.strftime("%A")
+            
+            # Unified prompt for classification + extraction
+            prompt = f"""Classify intent and extract details if applicable. Return JSON only.
+
+Current time: {current_time}
+Current date: {current_date} ({day_of_week})
+
+Input: "{user_message}"
+
+Intents: GET_WEATHER, ADD_TASK, DAILY_SUMMARY, CREATE_CALENDAR_EVENT, UPDATE_CALENDAR_EVENT, DELETE_CALENDAR_EVENT, LEARN, GENERAL_CHAT
+
+For calendar intents, extract:
+- title: event name (clean, no articles)
+- date: ISO date (YYYY-MM-DD) - understand "today", "tomorrow", "next Monday", etc.
+- hour: 24-hour format (0-23)
+- minute: (0-59)
+- duration: minutes (default 60 if not specified)
+
+For UPDATE, also extract:
+- event_name: which event to update
+- new_title: new name (null if not changing)
+- new_hour, new_minute: new time (null if not changing)
+
+For DELETE, extract:
+- event_name: which event to delete
+
+Output format:
+{{
+  "intent": "INTENT_NAME",
+  "confidence": 0.95,
+  "details": {{...}} or null
+}}
+
+Examples:
+"create movie at 6pm tomorrow" → {{"intent": "CREATE_CALENDAR_EVENT", "confidence": 0.95, "details": {{"title": "movie", "date": "2025-12-21", "hour": 18, "minute": 0, "duration": 60}}}}
+"what's the weather" → {{"intent": "GET_WEATHER", "confidence": 0.95, "details": null}}
+"change movie to 7pm" → {{"intent": "UPDATE_CALENDAR_EVENT", "confidence": 0.95, "details": {{"event_name": "movie", "new_hour": 19, "new_minute": 0}}}}"""
+
+            # Generate with minimal tokens for speed
+            response = self.model.generate_content(
+                prompt,
+                generation_config={
+                    "temperature": 0.0,  # Deterministic
+                    "max_output_tokens": 200,  # Enough for intent + details
+                }
+            )
+            
+            # Parse JSON response
+            import json
+            response_text = response.text.strip()
+            
+            # Extract JSON if wrapped in markdown
+            if "```json" in response_text:
+                response_text = response_text.split("```json")[1].split("```")[0].strip()
+            elif "```" in response_text:
+                response_text = response_text.split("```")[1].split("```")[0].strip()
+            
+            result = json.loads(response_text)
+            logger.info(f"Classified: {result['intent']} (confidence: {result['confidence']}) | Details: {result.get('details')}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Classification + extraction failed: {e}")
+            # Fallback to generic chat
+            return {"intent": "GENERAL_CHAT", "confidence": 0.5, "details": null}
+
     async def classify_intent(self, user_message: str) -> dict:
         """
         Classify user intent using minimal prompt for speed.

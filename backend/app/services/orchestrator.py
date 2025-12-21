@@ -31,14 +31,14 @@ class OrchestratorService:
                 - handler_response: Handler's structured response
         """
         try:
-            # Classify intent using existing Gemini classifier
+            # Step 1: Classify Intent using fast Gemini Flash
             intent_result = await self.gemini_service.classify_intent(transcript)
-            intent = intent_result.get("intent", "GENERAL_CHAT")
-            confidence = intent_result.get("confidence", 0.5)
+            intent = intent_result["intent"]
+            confidence = intent_result["confidence"]
             
             logger.info(f"Orchestrator: Intent={intent}, Confidence={confidence}")
             
-            # Route to appropriate handler based on intent
+            # Step 2: Route to appropriate handler (extraction happens inside handlers)
             handler_response = await self._route_to_handler(intent, transcript, confidence)
             
             return {
@@ -77,10 +77,10 @@ class OrchestratorService:
             Intent and confidence for client-side handling
         """
         try:
-            # Classify intent using existing Gemini classifier
+            # Step 1: Classify Intent
             intent_result = await self.gemini_service.classify_intent(transcript)
-            intent = intent_result.get("intent", "GENERAL_CHAT")
-            confidence = intent_result.get("confidence", 0.5)
+            intent = intent_result["intent"]
+            confidence = intent_result["confidence"]
             
             logger.info(f"Orchestrator Streaming: Intent={intent}, Confidence={confidence}")
             
@@ -96,10 +96,9 @@ class OrchestratorService:
                 async for chunk in self.gemini_service.generate_response_stream(transcript):
                     yield chunk, intent, confidence
             else:
-                # For structured intents: return immediate response (no streaming needed)
+                # For structured intents: return immediate response
                 logger.info(f"Immediate response for {intent} (structured data)")
                 handler_response = await self._route_to_handler(intent, transcript, confidence)
-                # Yield the complete message at once
                 yield handler_response["message"], intent, confidence
                 
         except Exception as e:
@@ -263,7 +262,7 @@ class OrchestratorService:
         Handle calendar event creation requests.
         
         Args:
-            transcript: User's create request (e.g., "create movie event at 6pm today")
+            transcript: User's create request
             
         Returns:
             Creation confirmation or error
@@ -276,24 +275,38 @@ class OrchestratorService:
             
             calendar_tool = get_calendar_tool()
             
-            # Use LLM to extract event details (reliable!)
+            # Step 2: Extract event details using dedicated method
             logger.info(f"Extracting event details from: {transcript}")
-            event_details = await self.gemini_service.extract_calendar_event(transcript)
+            details = await self.gemini_service.extract_calendar_event(transcript)
             
-            summary = event_details.get('title', 'New Event')
-            hour = event_details.get('hour', datetime.now().hour + 1)
-            minute = event_details.get('minute', 0)
+            summary = details.get('title', 'New Event')
+            hour = details.get('hour', datetime.now().hour + 1)
+            minute = details.get('minute', 0)
+            duration_minutes = details.get('duration', 60)  # Default 1 hour
             
-            # Create datetime for event
+            # Parse date (supports "today", "tomorrow", "2025-12-21", etc.)
+            event_date_str = details.get('date')
             now = datetime.now()
-            start_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
             
-            # If time is in the past, assume next day
-            if start_time < now:
+            if event_date_str:
+                try:
+                    # Parse ISO date format
+                    event_date = datetime.fromisoformat(event_date_str)
+                    start_time = event_date.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                except:
+                    # Fallback to today
+                    logger.warning(f"Could not parse date '{event_date_str}', using today")
+                    start_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            else:
+                # No date specified, use today
+                start_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            
+            # If time is in the past (and no explicit date), assume next day
+            if start_time < now and not event_date_str:
                 start_time += timedelta(days=1)
             
-            # Default duration: 1 hour
-            end_time = start_time + timedelta(hours=1)
+            # Set end time based on duration
+            end_time = start_time + timedelta(minutes=duration_minutes)
             
             # Format for Google Calendar API (ISO format with timezone)
             # Use timezone-aware datetime
@@ -343,7 +356,7 @@ class OrchestratorService:
         Handle calendar event update requests.
         
         Args:
-            transcript: User's update request (e.g., "change movie to 7pm")
+            transcript: User's update request
             
         Returns:
             Update confirmation or error
@@ -356,11 +369,11 @@ class OrchestratorService:
             
             calendar_tool = get_calendar_tool()
             
-            # Use LLM to extract update details
+            # Step 2: Extract update details
             logger.info(f"Extracting update details from: {transcript}")
-            update_details = await self.gemini_service.extract_calendar_update(transcript)
+            details = await self.gemini_service.extract_calendar_update(transcript)
             
-            event_name = update_details.get('event_name')
+            event_name = details.get('event_name')
             if not event_name:
                 return {
                     "type": "calendar_update",
@@ -368,12 +381,17 @@ class OrchestratorService:
                     "message": "I couldn't tell which event you want to update. Please specify the event name."
                 }
             
-            # Find the event
             events = calendar_tool.get_today_events()
+            # Find the event (flexible matching)
             matching_event = None
             
             for event in events:
-                if event_name.lower() in event.get('summary', '').lower():
+                event_summary = event.get('summary', '').lower()
+                event_name_lower = event_name.lower()
+                
+                # Match if event_name is in summary OR summary is in event_name
+                # e.g., "study" matches "study event" or "study event" matches "study"
+                if event_summary and (event_name_lower in event_summary or event_summary in event_name_lower):
                     matching_event = event
                     break
             
@@ -386,9 +404,9 @@ class OrchestratorService:
                 }
             
             # Build update params
-            new_title = update_details.get('new_title')
-            new_hour = update_details.get('new_hour')
-            new_minute = update_details.get('new_minute')
+            new_title = details.get('new_title')
+            new_hour = details.get('new_hour')
+            new_minute = details.get('new_minute')
             
             # Format new time if provided
             new_start_time = None
@@ -464,6 +482,26 @@ class OrchestratorService:
             from app.services.calendar_tool import get_calendar_tool
             
             calendar_tool = get_calendar_tool()
+            
+            # Step 2: Extract event name from transcript
+            # Use simple extraction - just pull event name from natural language
+            # e.g., "delete the haircut" -> "haircut"
+            import re
+            
+            # Try to extract event name (words after "delete", "remove", etc.)
+            delete_keywords = r'(?:delete|remove|cancel)\s+(?:the\s+)?([\w\s]+?)(?:\s+event|\s+appointment|\s+from|\s+at|$)'
+            match = re.search(delete_keywords, transcript.lower())
+            
+            if match:
+                event_name = match.group(1).strip()
+            else:
+                # Fallback: just take the last few words as event name
+                words = transcript.split()
+                event_name = ' '.join(words[-3:]) if len(words) >= 3 else ' '.join(words)
+            
+            logger.info(f"Extracted event name for deletion: '{event_name}'")
+            
+            # Fetch today's events
             events = calendar_tool.get_today_events()
             
             if not events:
@@ -473,13 +511,14 @@ class OrchestratorService:
                     "message": "You don't have any events today to delete."
                 }
             
-            # Find matching event by name in transcript
-            transcript_lower = transcript.lower()
+            # Find matching event by name from details (flexible matching)
             matching_event = None
+            event_name_lower = event_name.lower()
             
             for event in events:
                 event_summary = event.get('summary', '').lower()
-                if event_summary and event_summary in transcript_lower:
+                # Match if event_name is in summary OR summary is in event_name
+                if event_summary and (event_name_lower in event_summary or event_summary in event_name_lower):
                     matching_event = event
                     break
             
@@ -488,7 +527,7 @@ class OrchestratorService:
                 return {
                     "type": "calendar_delete",
                     "data": {"available_events": event_names},
-                    "message": f"I couldn't find that event. You have: {', '.join(event_names)}."
+                    "message": f"I couldn't find '{event_name}'. You have: {', '.join(event_names)}."
                 }
             
             # Delete the event
