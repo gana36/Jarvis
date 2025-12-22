@@ -659,17 +659,39 @@ Examples:
             }
 
     async def _handle_list_tasks(self, transcript: str) -> Dict[str, Any]:
-        """List all pending tasks without filtering."""
+        """List all pending tasks with optional priority filtering."""
         logger.info("Handler: LIST_TASKS")
         
         try:
             from app.services.task_tool import get_task_tool
             
+            # Simple keyword-based filter detection (no LLM needed)
+            transcript_lower = transcript.lower()
+            priority_filter = None
+            
+            if "high priority" in transcript_lower or "high-priority" in transcript_lower:
+                priority_filter = "high"
+            elif "medium priority" in transcript_lower or "medium-priority" in transcript_lower:
+                priority_filter = "medium"
+            elif "low priority" in transcript_lower or "low-priority" in transcript_lower:
+                priority_filter = "low"
+            
             # Get all pending tasks (simple, no LLM extraction)
             task_tool = get_task_tool()
             all_tasks = task_tool.list_tasks(status_filter="pending")
             
+            # Apply priority filter if detected
+            if priority_filter:
+                all_tasks = [t for t in all_tasks if t.get('priority') == priority_filter]
+                logger.info(f"Filtered for {priority_filter} priority: {len(all_tasks)} tasks")
+            
             if not all_tasks:
+                if priority_filter:
+                    return {
+                        "type": "task_list",
+                        "data": {"tasks": [], "filter": priority_filter},
+                        "message": f"You don't have any {priority_filter} priority tasks."
+                    }
                 return {
                     "type": "task_list",
                     "data": {"tasks": []},
@@ -683,19 +705,23 @@ Examples:
                 tasks_by_priority[task.get('priority')].append(task)
             
             # Build message
-            parts = [f"You have {len(all_tasks)} pending task{'s' if len(all_tasks) != 1 else ''}:"]
+            if priority_filter:
+                parts = [f"You have {len(all_tasks)} {priority_filter} priority task{'s' if len(all_tasks) != 1 else ''}:"]
+            else:
+                parts = [f"You have {len(all_tasks)} pending task{'s' if len(all_tasks) != 1 else ''}:"]
             
             for priority in priority_order:
                 tasks = tasks_by_priority[priority]
                 if not tasks:
                     continue
                 for task in tasks:
-                    prefix = f"{priority.upper()}: " if priority else ""
+                    # Only show priority prefix if not filtering by priority
+                    prefix = f"{priority.upper()}: " if priority and not priority_filter else ""
                     parts.append(f"- {prefix}{task['title']}")
             
             return {
                 "type": "task_list",
-                "data": {"tasks": all_tasks, "count": len(all_tasks)},
+                "data": {"tasks": all_tasks, "count": len(all_tasks), "filter": priority_filter},
                 "message": "\n".join(parts)
             }
             
@@ -706,6 +732,7 @@ Examples:
                 "data": {"error": str(e)},
                 "message": "I had trouble listing your tasks."
             }
+
 
     async def _handle_get_task_reminders(self, transcript: str) -> Dict[str, Any]:
         """Compile and prioritize task reminders."""
