@@ -131,9 +131,11 @@ class OrchestratorService:
         handlers = {
             "GET_WEATHER": self._handle_get_weather,
             "ADD_TASK": self._handle_add_task,
-            "COMPLETE_TASK": self._handle_complete_task,  # NEW
-            "UPDATE_TASK": self._handle_update_task,      # NEW
-            "DELETE_TASK": self._handle_delete_task,      # NEW
+            "COMPLETE_TASK": self._handle_complete_task,
+            "UPDATE_TASK": self._handle_update_task,
+            "DELETE_TASK": self._handle_delete_task,
+            "LIST_TASKS": self._handle_list_tasks,
+            "GET_TASK_REMINDERS": self._handle_get_task_reminders,
             "DAILY_SUMMARY": self._handle_daily_summary,
             "CREATE_CALENDAR_EVENT": self._handle_create_calendar_event,
             "UPDATE_CALENDAR_EVENT": self._handle_update_calendar_event,
@@ -144,7 +146,16 @@ class OrchestratorService:
         
         # Get handler or default to general chat
         handler = handlers.get(intent, self._handle_general_chat)
-        return await handler(transcript)
+        handler_response = await handler(transcript)
+        
+        # Beautify the message for natural speech
+        if "message" in handler_response:
+            handler_response["message"] = await self._beautify_response(
+                handler_response["message"], 
+                intent
+            )
+        
+        return handler_response
 
     def _parse_date_range(self, transcript: str) -> tuple[Any, Any]:
         """
@@ -238,6 +249,41 @@ class OrchestratorService:
 
     # ========== Handler Functions (Mock Data) ==========
 
+    async def _beautify_response(self, raw_message: str, intent: str) -> str:
+        """Transform structured response into natural conversational speech.
+        
+        Optimized for low latency (~100-150ms):
+        - Uses Gemini Flash
+        - Minimal prompt
+        - Short output limit
+        """
+        try:
+            # Skip for very short messages or if already natural
+            if len(raw_message) < 30:
+                return raw_message
+            
+            prompt = f"""Make this natural for voice assistant. Conversational, 2-3 sentences.
+
+Input: {raw_message}
+
+Natural:"""
+            
+            response = self.gemini_service.model.generate_content(
+                prompt,
+                generation_config={"temperature": 0.7, "max_output_tokens": 120}
+            )
+            
+            beautified = response.text.strip()
+            if beautified.startswith('"'):
+                beautified = beautified.strip('"')
+            
+            return beautified if beautified else raw_message
+            
+        except Exception as e:
+            logger.warning(f"Beautification skipped: {e}")
+            return raw_message
+
+
     async def _handle_get_weather(self, transcript: str) -> Dict[str, Any]:
         """
         Handle weather queries with mock data.
@@ -264,69 +310,111 @@ class OrchestratorService:
 
     async def _handle_add_task(self, transcript: str) -> Dict[str, Any]:
         """
-        Handle task creation requests with priority extraction.
+        Handle task creation requests with priority and due date extraction.
         
         Uses Gemini to extract:
         - Task title (clean, without trigger words)
         - Priority (high/medium/low or null)
+        - Due date (natural language → ISO date)
         
         Examples:
-        - "Add buy groceries" → title="buy groceries", priority=null
+        - "Add buy groceries" → title="buy groceries", priority=null, due_date=null
         - "Add high priority task finish presentation" → title="finish presentation", priority="high"
+        - "Add call dentist by Friday" → title="call dentist", due_date="2025-12-27"
         """
         logger.info("Handler: ADD_TASK")
         
         try:
             from app.services.task_tool import get_task_tool
+            from datetime import datetime
             
-            # Use Gemini to extract title and priority
+            # Get current date for context
+            now = datetime.now().astimezone()
+            current_date = now.strftime("%Y-%m-%d (%A)")
+            
+            # Use Gemini to extract title, priority, and due date
             prompt = f"""Extract task details. Return JSON only.
+
+Current date: {current_date}
 
 User: "{transcript}"
 
 Extract:
 - title: task description (clean, no words like "add", "create", "task", "todo")
 - priority: "high", "medium", "low", or null if not mentioned
+- due_date: ISO date string (YYYY-MM-DD) or null if not mentioned
+  Parse natural dates: "tomorrow", "Friday", "next Monday", "in 3 days", "by Friday"
 
-Format: {{"title": "...", "priority": null}}
+Format: {{"title": "...", "priority": null, "due_date": null}}
 
 Examples:
-- "Add buy groceries" → {{"title": "buy groceries", "priority": null}}
-- "Add high priority task finish presentation" → {{"title": "finish presentation", "priority": "high"}}
-- "Create medium priority task call dentist" → {{"title": "call dentist", "priority": "medium"}}
-- "Remember to water plants" → {{"title": "water plants", "priority": null}}"""
+- "Add buy groceries" → {{"title": "buy groceries", "priority": null, "due_date": null}}
+- "Add high priority task finish presentation" → {{"title": "finish presentation", "priority": "high", "due_date": null}}
+- "Add call dentist by Friday" → {{"title": "call dentist", "priority": null, "due_date": "2025-12-27"}}
+- "Add finish report tomorrow" → {{"title": "finish report", "priority": null, "due_date": "2025-12-23"}}
+- "Remember to water plants next Monday" → {{"title": "water plants", "priority": null, "due_date": "2025-12-30"}}"""
 
             response = self.gemini_service.model.generate_content(
                 prompt,
-                generation_config={"temperature": 0.0, "max_output_tokens": 100}
+                generation_config={"temperature": 0.0, "max_output_tokens": 150}
             )
             
             import json
             text = response.text.strip()
+            
+            # Extract JSON from response
             if "```json" in text:
                 text = text.split("```json")[1].split("```")[0].strip()
             elif "```" in text:
                 text = text.split("```")[1].split("```")[0].strip()
+                if text.startswith('json'):
+                    text = text[4:].strip()
+            else:
+                # No code blocks - extract JSON directly
+                start = text.find('{')
+                end = text.rfind('}')
+                if start != -1 and end != -1:
+                    text = text[start:end+1]
             
             extracted = json.loads(text)
             title = extracted.get("title", "New task")
             priority = extracted.get("priority")
+            due_date_str = extracted.get("due_date")
+            
+            # Parse due date if provided
+            due_date = None
+            if due_date_str:
+                try:
+                    # Parse ISO date and set to end of day
+                    due_date = datetime.fromisoformat(due_date_str).replace(
+                        hour=23, minute=59, second=59
+                    ).astimezone()
+                except Exception as e:
+                    logger.warning(f"Failed to parse due date '{due_date_str}': {e}")
             
             # Create task in Firestore
             task_tool = get_task_tool()
             task = task_tool.add_task(
                 title=title,
                 status="pending",
-                priority=priority
+                priority=priority,
+                due_date=due_date
             )
             
             # Build response message
-            priority_str = f" with {priority} priority" if priority else ""
+            parts = [f"I've added '{title}'"]
+            if priority:
+                parts.append(f"with {priority} priority")
+            if due_date:
+                # Format due date nicely
+                due_str = due_date.strftime("%A, %B %d")
+                parts.append(f"due {due_str}")
+            parts[-1] += " to your task list."
             
             return {
                 "type": "task_creation",
                 "data": task,
-                "message": f"I've added '{title}'{priority_str} to your task list."
+                "message": " ".join(parts)
             }
             
         except Exception as e:
@@ -570,6 +658,157 @@ Examples:
                 "message": "I had trouble deleting that task."
             }
 
+    async def _handle_list_tasks(self, transcript: str) -> Dict[str, Any]:
+        """List all pending tasks without filtering."""
+        logger.info("Handler: LIST_TASKS")
+        
+        try:
+            from app.services.task_tool import get_task_tool
+            
+            # Get all pending tasks (simple, no LLM extraction)
+            task_tool = get_task_tool()
+            all_tasks = task_tool.list_tasks(status_filter="pending")
+            
+            if not all_tasks:
+                return {
+                    "type": "task_list",
+                    "data": {"tasks": []},
+                    "message": "You don't have any pending tasks."
+                }
+            
+            # Group by priority for better voice output
+            priority_order = ['high', 'medium', 'low', None]
+            tasks_by_priority = {p: [] for p in priority_order}
+            for task in all_tasks:
+                tasks_by_priority[task.get('priority')].append(task)
+            
+            # Build message
+            parts = [f"You have {len(all_tasks)} pending task{'s' if len(all_tasks) != 1 else ''}:"]
+            
+            for priority in priority_order:
+                tasks = tasks_by_priority[priority]
+                if not tasks:
+                    continue
+                for task in tasks:
+                    prefix = f"{priority.upper()}: " if priority else ""
+                    parts.append(f"- {prefix}{task['title']}")
+            
+            return {
+                "type": "task_list",
+                "data": {"tasks": all_tasks, "count": len(all_tasks)},
+                "message": "\n".join(parts)
+            }
+            
+        except Exception as e:
+            logger.error(f"List tasks failed: {e}")
+            return {
+                "type": "task_list",
+                "data": {"error": str(e)},
+                "message": "I had trouble listing your tasks."
+            }
+
+    async def _handle_get_task_reminders(self, transcript: str) -> Dict[str, Any]:
+        """Compile and prioritize task reminders."""
+        logger.info("Handler: GET_TASK_REMINDERS")
+        
+        try:
+            from app.services.task_tool import get_task_tool
+            from datetime import datetime, timedelta
+            
+            now = datetime.now().astimezone()
+            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            today_end = now.replace(hour=23, minute=59, second=59)
+            soon_end = (now + timedelta(days=3)).replace(hour=23, minute=59, second=59)
+            
+            # Get all pending tasks
+            task_tool = get_task_tool()
+            tasks = task_tool.list_tasks(status_filter="pending")
+            
+            # Categorize
+            overdue = []
+            due_today = []
+            due_soon = []
+            no_due_date = []
+            
+            for task in tasks:
+                if not task.get('due_date'):
+                    no_due_date.append(task)
+                    continue
+                
+                due_date = datetime.fromisoformat(task['due_date'])
+                
+                if due_date < today_start:
+                    overdue.append(task)
+                elif today_start <= due_date <= today_end:
+                    due_today.append(task)
+                elif due_date <= soon_end:
+                    due_soon.append(task)
+            
+            # Sort by priority
+            priority_order = {'high': 0, 'medium': 1, 'low': 2, None: 3}
+            overdue.sort(key=lambda x: priority_order.get(x.get('priority'), 3))
+            due_today.sort(key=lambda x: priority_order.get(x.get('priority'), 3))
+            due_soon.sort(key=lambda x: (x.get('due_date'), priority_order.get(x.get('priority'), 3)))
+            
+            # Build response
+            parts = []
+            
+            if overdue:
+                parts.append(f"\n⚠️ Overdue ({len(overdue)} task{'s' if len(overdue) != 1 else ''}):")
+                for task in overdue:
+                    due = datetime.fromisoformat(task['due_date'])
+                    days_overdue = (now - due).days
+                    priority_str = f"{task.get('priority', '').upper()}: " if task.get('priority') else ""
+                    parts.append(f"- {priority_str}{task['title']} ({days_overdue} day{'s' if days_overdue != 1 else ''} overdue)")
+            
+            if due_today:
+                parts.append(f"\n✅ Due Today ({len(due_today)} task{'s' if len(due_today) != 1 else ''}):")
+                for task in due_today:
+                    priority_str = f"{task.get('priority', '').upper()}: " if task.get('priority') else ""
+                    parts.append(f"- {priority_str}{task['title']}")
+            
+            if due_soon:
+                parts.append(f"\n📅 Due Soon ({len(due_soon)} task{'s' if len(due_soon) != 1 else ''}):")
+                for task in due_soon:
+                    due = datetime.fromisoformat(task['due_date'])
+                    due_str = due.strftime("%A")
+                    priority_str = f"{task.get('priority', '').upper()}: " if task.get('priority') else ""
+                    parts.append(f"- {priority_str}{task['title']} (due{due_str})")
+            
+            if not parts:
+                if no_due_date:
+                    return {
+                        "type": "task_reminders",
+                        "data": {"no_due_date": no_due_date},
+                        "message": f"You have {len(no_due_date)} pending task{'s' if len(no_due_date) != 1 else ''} with no due dates."
+                    }
+                else:
+                    return {
+                        "type": "task_reminders",
+                        "data": {},
+                        "message": "You're all caught up! No tasks with upcoming due dates."
+                    }
+            
+            message = "Here's what you need to do:" + "".join(parts)
+            
+            return {
+                "type": "task_reminders",
+                "data": {
+                    "overdue": overdue,
+                    "due_today": due_today,
+                    "due_soon": due_soon
+                },
+                "message": message
+            }
+            
+        except Exception as e:
+            logger.error(f"Get reminders failed: {e}")
+            return {
+                "type": "task_reminders",
+                "data": {"error": str(e)},
+                "message": "I had trouble getting your reminders."
+            }
+
     async def _handle_daily_summary(self, transcript: str) -> Dict[str, Any]:
         """
         Handle daily summary requests with real calendar data.
@@ -595,9 +834,49 @@ Examples:
             # Fetch events for the specified date range
             events = calendar_tool.get_events_in_range(start_date, end_date)
             
+            # Get tasks for comprehensive summary
+            from app.services.task_tool import get_task_tool
+            task_tool = get_task_tool()
+            all_tasks = task_tool.list_tasks(status_filter="pending")
+            
+            # Categorize tasks by due date
+            overdue_tasks = []
+            due_today_tasks = []
+            
+            for task in all_tasks:
+                if not task.get('due_date'):
+                    continue
+                due_date = datetime.fromisoformat(task['due_date'])
+                if due_date < start_date:
+                    overdue_tasks.append(task)
+                elif start_date <= due_date <= end_date:
+                    due_today_tasks.append(task)
+            
+            # Sort by priority
+            priority_order = {'high': 0, 'medium': 1, 'low': 2, None: 3}
+            overdue_tasks.sort(key=lambda x: priority_order.get(x.get('priority'), 3))
+            due_today_tasks.sort(key=lambda x: priority_order.get(x.get('priority'), 3))
+            
+            
             if events:
                 # Use real calendar data
-                summary_message = calendar_tool.summarize_events(events)
+                summary_message_parts = [calendar_tool.summarize_events(events)]
+                
+                # Add overdue tasks
+                if overdue_tasks:
+                    summary_message_parts.append(f"\n\n⚠️ Overdue ({len(overdue_tasks)} task{'s' if len(overdue_tasks) != 1 else ''}):")
+                    for task in overdue_tasks:
+                        priority = f"[{task.get('priority', '').upper()}] " if task.get('priority') else ""
+                        summary_message_parts.append(f"  • {priority}{task['title']}")
+                
+                # Add tasks due today
+                if due_today_tasks:
+                    summary_message_parts.append(f"\n\n✅ Tasks Due Today ({len(due_today_tasks)}):")
+                    for task in due_today_tasks:
+                        priority = f"[{task.get('priority', '').upper()}] " if task.get('priority') else ""
+                        summary_message_parts.append(f"  • {priority}{task['title']}")
+                
+                summary_message = "\n".join(summary_message_parts)
                 
                 # Determine date context for response
                 now = datetime.now().astimezone()
