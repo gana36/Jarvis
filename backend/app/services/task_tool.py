@@ -49,6 +49,7 @@ class TaskTool:
         self,
         title: str,
         status: str = "pending",
+        priority: str | None = None,
         due_date: datetime | None = None
     ) -> Dict[str, Any]:
         """
@@ -57,6 +58,7 @@ class TaskTool:
         Args:
             title: Task title/description
             status: Task status (default: "pending")
+            priority: Task priority ("high", "medium", "low", or None)
             due_date: Optional due date
             
         Returns:
@@ -69,6 +71,7 @@ class TaskTool:
             task_data = {
                 'title': title,
                 'status': status,
+                'priority': priority,
                 'due_date': due_date,
                 'created_at': now,
                 'updated_at': now,
@@ -85,6 +88,7 @@ class TaskTool:
                 'id': task_id,
                 'title': title,
                 'status': status,
+                'priority': priority,
                 'due_date': due_date.isoformat() if due_date else None,
                 'created_at': now.isoformat(),
                 'updated_at': now.isoformat(),
@@ -111,8 +115,9 @@ class TaskTool:
             if status_filter:
                 query = query.where(filter=FieldFilter('status', '==', status_filter))
             
-            # Order by created_at descending (newest first)
-            query = query.order_by('created_at', direction=firestore.Query.DESCENDING)
+            # Only order by created_at if NOT filtering by status (avoids composite index requirement)
+            if not status_filter:
+                query = query.order_by('created_at', direction=firestore.Query.DESCENDING)
             
             # Execute query
             docs = query.stream()
@@ -132,6 +137,10 @@ class TaskTool:
                     task_data['due_date'] = task_data['due_date'].isoformat()
                 
                 tasks.append(task_data)
+            
+            # Sort in Python if we filtered (since we couldn't order in query)
+            if status_filter and tasks:
+                tasks.sort(key=lambda x: x.get('created_at', ''), reverse=True)
             
             logger.info(f"✓ Listed {len(tasks)} tasks (filter: {status_filter or 'none'})")
             return tasks
@@ -174,6 +183,108 @@ class TaskTool:
         except Exception as e:
             logger.error(f"Failed to get task {task_id}: {e}")
             return None
+
+    def update_task(
+        self,
+        task_id: str,
+        updates: Dict[str, Any]
+    ) -> Dict[str, Any] | None:
+        """
+        Update task fields in Firestore.
+        
+        Args:
+            task_id: Firestore document ID
+            updates: Dictionary of fields to update (title, status, priority, due_date)
+            
+        Returns:
+            Updated task data or None if not found
+        """
+        try:
+            doc_ref = self.collection.document(task_id)
+            doc = doc_ref.get()
+            
+            if not doc.exists:
+                logger.warning(f"Task not found for update: {task_id}")
+                return None
+            
+            # Add updated_at timestamp
+            updates['updated_at'] = datetime.now()
+            
+            # Update in Firestore
+            doc_ref.update(updates)
+            
+            # Get updated document
+            updated_doc = doc_ref.get()
+            task_data = updated_doc.to_dict()
+            task_data['id'] = task_id
+            
+            # Convert timestamps to ISO strings
+            if task_data.get('created_at'):
+                task_data['created_at'] = task_data['created_at'].isoformat()
+            if task_data.get('updated_at'):
+                task_data['updated_at'] = task_data['updated_at'].isoformat()
+            if task_data.get('due_date'):
+                task_data['due_date'] = task_data['due_date'].isoformat()
+            
+            logger.info(f"✓ Updated task: {task_id}")
+            return task_data
+            
+        except Exception as e:
+            logger.error(f"Failed to update task {task_id}: {e}")
+            return None
+
+    def delete_task(self, task_id: str) -> bool:
+        """
+        Delete task from Firestore.
+        
+        Args:
+            task_id: Firestore document ID
+            
+        Returns:
+            True if deleted, False if not found
+        """
+        try:
+            doc_ref = self.collection.document(task_id)
+            doc = doc_ref.get()
+            
+            if not doc.exists:
+                logger.warning(f"Task not found for deletion: {task_id}")
+                return False
+            
+            # Delete from Firestore
+            doc_ref.delete()
+            
+            logger.info(f"✓ Deleted task: {task_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to delete task {task_id}: {e}")
+            return False
+
+    def mark_complete(self, task_id: str) -> Dict[str, Any] | None:
+        """
+        Mark task as completed.
+        
+        Args:
+            task_id: Firestore document ID
+            
+        Returns:
+           Updated task data or None if not found
+        """
+        return self.update_task(task_id, {"status": "completed"})
+
+    def mark_incomplete(self, task_id: str) -> Dict[str, Any] | None:
+        """
+        Mark task as pending (undo completion).
+        
+        Args:
+            task_id: Firestore document ID
+            
+        Returns:
+            Updated task data or None if not found
+        """
+        return self.update_task(task_id, {"status": "pending"})
+
 
 
 @lru_cache

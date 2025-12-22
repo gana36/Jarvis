@@ -15,7 +15,16 @@ class CreateTaskRequest(BaseModel):
     """Request for creating a new task"""
     title: str
     status: str = "pending"
+    priority: str | None = None  # "high", "medium", "low", or None
     due_date: str | None = None  # ISO format datetime string
+
+
+class UpdateTaskRequest(BaseModel):
+    """Request for updating a task"""
+    title: str | None = None
+    status: str | None = None
+    priority: str | None = None
+    due_date: str | None = None
 
 
 class TaskResponse(BaseModel):
@@ -23,6 +32,7 @@ class TaskResponse(BaseModel):
     id: str
     title: str
     status: str
+    priority: str | None
     due_date: str | None
     created_at: str
     updated_at: str
@@ -57,6 +67,7 @@ async def create_task(request: CreateTaskRequest):
         task = task_tool.add_task(
             title=request.title,
             status=request.status,
+            priority=request.priority,
             due_date=due_date
         )
         
@@ -115,3 +126,78 @@ async def get_task(task_id: str):
     except Exception as e:
         logger.error(f"Failed to get task: {e}")
         raise HTTPException(status_code=500, detail="Failed to get task")
+
+
+@router.patch("/{task_id}", response_model=TaskResponse)
+async def update_task(task_id: str, request: UpdateTaskRequest):
+    """
+    Update task fields.
+    
+    Args:
+        task_id: Firestore document ID
+        request: Fields to update
+        
+    Returns:
+        Updated task data
+    """
+    try:
+        task_tool = get_task_tool()
+        
+        # Build updates dictionary (only include non-None values)
+        updates = {}
+        if request.title is not None:
+            updates['title'] = request.title
+        if request.status is not None:
+            updates['status'] = request.status
+        if request.priority is not None:
+            updates['priority'] = request.priority
+        if request.due_date is not None:
+            try:
+                due_date = datetime.fromisoformat(request.due_date)
+                updates['due_date'] = due_date
+            except ValueError:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid due_date format. Use ISO format (YYYY-MM-DDTHH:MM:SS)"
+                )
+        
+        # Update task
+        task = task_tool.update_task(task_id, updates)
+        
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        
+        return task
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update task: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update task")
+
+
+@router.delete("/{task_id}", status_code=204)
+async def delete_task(task_id: str):
+    """
+    Delete task permanently.
+    
+    Args:
+        task_id: Firestore document ID
+        
+    Returns:
+        No content on success
+    """
+    try:
+        task_tool = get_task_tool()
+        success = task_tool.delete_task(task_id)
+        
+        if not success:
+            raise HTTPException(status_code=404, detail="Task not found")
+        
+        return None  # 204 No Content
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete task: {e}")
+        raise HTTPException(status_code=500, detail="Failed to delete task")

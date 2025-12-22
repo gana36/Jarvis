@@ -131,6 +131,9 @@ class OrchestratorService:
         handlers = {
             "GET_WEATHER": self._handle_get_weather,
             "ADD_TASK": self._handle_add_task,
+            "COMPLETE_TASK": self._handle_complete_task,  # NEW
+            "UPDATE_TASK": self._handle_update_task,      # NEW
+            "DELETE_TASK": self._handle_delete_task,      # NEW
             "DAILY_SUMMARY": self._handle_daily_summary,
             "CREATE_CALENDAR_EVENT": self._handle_create_calendar_event,
             "UPDATE_CALENDAR_EVENT": self._handle_update_calendar_event,
@@ -206,6 +209,33 @@ class OrchestratorService:
         logger.info(f"No specific date found, using default range: next 7 days")
         return (start, end)
 
+    def _find_best_task_match(self, query: str, tasks: list) -> dict | None:
+        """
+        Find best matching task using fuzzy string matching.
+        
+        Args:
+            query: Task name to search for
+            tasks: List of task dictionaries
+            
+        Returns:
+            Best matching task or None
+        """
+        from difflib import SequenceMatcher
+        
+        best_match = None
+        best_score = 0.0
+        
+        for task in tasks:
+            title = task.get('title', '').lower()
+            score = SequenceMatcher(None, query.lower(), title).ratio()
+            
+            if score > best_score and score > 0.6:  # 60% match threshold
+                best_score = score
+                best_match = task
+        
+        logger.info(f"Fuzzy match: '{query}' -> '{best_match['title'] if best_match else 'none'}' (score: {best_score:.2f})")
+        return best_match
+
     # ========== Handler Functions (Mock Data) ==========
 
     async def _handle_get_weather(self, transcript: str) -> Dict[str, Any]:
@@ -234,50 +264,310 @@ class OrchestratorService:
 
     async def _handle_add_task(self, transcript: str) -> Dict[str, Any]:
         """
-        Handle task creation requests with Firestore persistence.
+        Handle task creation requests with priority extraction.
         
-        Args:
-            transcript: User's task creation request
-            
-        Returns:
-            Task creation confirmation with persisted data
+        Uses Gemini to extract:
+        - Task title (clean, without trigger words)
+        - Priority (high/medium/low or null)
+        
+        Examples:
+        - "Add buy groceries" → title="buy groceries", priority=null
+        - "Add high priority task finish presentation" → title="finish presentation", priority="high"
         """
         logger.info("Handler: ADD_TASK")
         
         try:
             from app.services.task_tool import get_task_tool
             
-            # Extract task title from transcript
-            # Simple extraction: remove common trigger words
-            task_title = transcript
-            for trigger in ["add", "create", "new task", "to my todo list", "to my tasks", "to do"]:
-                task_title = task_title.replace(trigger, "")
-            task_title = task_title.strip()
+            # Use Gemini to extract title and priority
+            prompt = f"""Extract task details. Return JSON only.
+
+User: "{transcript}"
+
+Extract:
+- title: task description (clean, no words like "add", "create", "task", "todo")
+- priority: "high", "medium", "low", or null if not mentioned
+
+Format: {{"title": "...", "priority": null}}
+
+Examples:
+- "Add buy groceries" → {{"title": "buy groceries", "priority": null}}
+- "Add high priority task finish presentation" → {{"title": "finish presentation", "priority": "high"}}
+- "Create medium priority task call dentist" → {{"title": "call dentist", "priority": "medium"}}
+- "Remember to water plants" → {{"title": "water plants", "priority": null}}"""
+
+            response = self.gemini_service.model.generate_content(
+                prompt,
+                generation_config={"temperature": 0.0, "max_output_tokens": 100}
+            )
             
-            # If title is empty after cleaning, use original transcript
-            if not task_title:
-                task_title = transcript
+            import json
+            text = response.text.strip()
+            if "```json" in text:
+                text = text.split("```json")[1].split("```")[0].strip()
+            elif "```" in text:
+                text = text.split("```")[1].split("```")[0].strip()
+            
+            extracted = json.loads(text)
+            title = extracted.get("title", "New task")
+            priority = extracted.get("priority")
             
             # Create task in Firestore
             task_tool = get_task_tool()
             task = task_tool.add_task(
-                title=task_title,
-                status="pending"
+                title=title,
+                status="pending",
+                priority=priority
             )
             
+            # Build response message
+            priority_str = f" with {priority} priority" if priority else ""
+            
             return {
-                "type": "task",
+                "type": "task_creation",
                 "data": task,
-                "message": f"I've added '{task_title}' to your task list.",
+                "message": f"I've added '{title}'{priority_str} to your task list."
             }
             
         except Exception as e:
             logger.error(f"Task creation failed: {e}")
-            # Fallback to informative error message
             return {
-                "type": "task",
+                "type": "task_creation",
                 "data": {"error": str(e)},
                 "message": "I had trouble adding that task. Please try again.",
+            }
+
+
+    async def _handle_complete_task(self, transcript: str) -> Dict[str, Any]:
+        """
+        Mark task as completed.
+        
+        Strategy:
+        1. Extract task name from transcript (LLM)
+        2. List pending tasks  
+        3. Fuzzy match to find task
+        4. Mark as complete
+        
+        Timeline: ~250ms total
+        """
+        logger.info("Handler: COMPLETE_TASK")
+        
+        try:
+            from app.services.task_tool import get_task_tool
+            from app.services.gemini_task_extraction import extract_task_completion
+            
+            # Step 1: Extract task name (~150ms)
+            extracted = await extract_task_completion(self.gemini_service.model, transcript)
+            task_name = extracted.get("task_name", "")
+            
+            if not task_name:
+                return {
+                    "type": "task_completion",
+                    "data": {"error": "Could not identify task"},
+                    "message": "Which task would you like to mark as complete?"
+                }
+            
+            # Step 2: Get pending tasks (~50ms)
+            task_tool = get_task_tool()
+            pending_tasks = task_tool.list_tasks(status_filter="pending")
+            
+            if not pending_tasks:
+                return {
+                    "type": "task_completion",
+                    "data": {},
+                    "message": "You don't have any pending tasks."
+                }
+            
+            # Step 3: Fuzzy match
+            matching_task = self._find_best_task_match(task_name, pending_tasks)
+            
+            if not matching_task:
+                return {
+                    "type": "task_completion",
+                    "data": {"searched_for": task_name},
+                    "message": f"I couldn't find a task matching '{task_name}'."
+                }
+            
+            # Step 4: Mark complete (~50ms)
+            updated = task_tool.mark_complete(matching_task["id"])
+            
+            return {
+                "type": "task_completion",
+                "data": updated,
+                "message": f"I've marked '{matching_task['title']}' as complete."
+            }
+            
+        except Exception as e:
+            logger.error(f"Task completion failed: {e}")
+            return {
+                "type": "task_completion",
+                "data": {"error": str(e)},
+                "message": "I had trouble completing that task."
+            }
+    async def _handle_update_task(self, transcript: str) -> Dict[str, Any]:
+        """
+        Update task fields (priority, title, status).
+        
+        Strategy:
+        1. Extract task name and updates (LLM)
+        2. List all tasks
+        3. Fuzzy match to find task
+        4. Update task
+        
+        Timeline: ~300ms total
+        """
+        logger.info("Handler: UPDATE_TASK")
+        
+        try:
+            from app.services.task_tool import get_task_tool
+            from app.services.gemini_task_extraction import extract_task_update
+            
+            # Step 1: Extract details (~200ms)
+            extracted = await extract_task_update(self.gemini_service.model, transcript)
+            
+            task_name = extracted.get("task_name", "")
+            priority = extracted.get("priority")
+            new_title = extracted.get("new_title")
+            
+            if not task_name:
+                return {
+                    "type": "task_update",
+                    "data": {"error": "Could not identify task"},
+                    "message": "Which task would you like to update?"
+                }
+            
+            # Step 2: Get all tasks
+            task_tool = get_task_tool()
+            all_tasks = task_tool.list_tasks()
+            
+            if not all_tasks:
+                return {
+                    "type": "task_update",
+                    "data": {},
+                    "message": "You don't have any tasks."
+                }
+            
+            # Step 3: Fuzzy match
+            matching_task = self._find_best_task_match(task_name, all_tasks)
+            
+            if not matching_task:
+                return {
+                    "type": "task_update",
+                    "data": {"searched_for": task_name},
+                    "message": f"I couldn't find a task matching '{task_name}'."
+                }
+            
+            # Step 4: Build updates and apply
+            updates = {}
+            if priority:
+                updates['priority'] = priority
+            if new_title:
+                updates['title'] = new_title
+            
+            if not updates:
+                return {
+                    "type": "task_update",
+                    "data": matching_task,
+                    "message": "What would you like to update for this task?"
+                }
+            
+            updated = task_tool.update_task(matching_task["id"], updates)
+            
+            # Build response message
+            changes = []
+            if priority:
+                changes.append(f"priority to {priority}")
+            if new_title:
+                changes.append(f"title to '{new_title}'")
+            
+            changes_str = " and ".join(changes)
+            
+            return {
+                "type": "task_update",
+                "data": updated,
+                "message": f"I've updated '{matching_task['title']}' - changed {changes_str}."
+            }
+            
+        except Exception as e:
+            logger.error(f"Task update failed: {e}")
+            return {
+                "type": "task_update",
+                "data": {"error": str(e)},
+                "message": "I had trouble updating that task."
+            }
+    async def _handle_delete_task(self, transcript: str) -> Dict[str, Any]:
+        """
+        Delete task permanently.
+        
+        Strategy:
+        1. Extract task name (LLM)
+        2. List all tasks (pending + completed)
+        3. Fuzzy match to find task
+        4. Delete task
+        
+        Timeline: ~250ms total
+        """
+        logger.info("Handler: DELETE_TASK")
+        
+        try:
+            from app.services.task_tool import get_task_tool
+            from app.services.gemini_task_extraction import extract_task_deletion
+            
+            # Step 1: Extract task name (~150ms)
+            extracted = await extract_task_deletion(self.gemini_service.model, transcript)
+            task_name = extracted.get("task_name", "")
+            
+            if not task_name:
+                return {
+                    "type": "task_deletion",
+                    "data": {"error": "Could not identify task"},
+                    "message": "Which task would you like to delete?"
+                }
+            
+            # Step 2: Get all tasks (including completed)
+            task_tool = get_task_tool()
+            all_tasks = task_tool.list_tasks()
+            
+            if not all_tasks:
+                return {
+                    "type": "task_deletion",
+                    "data": {},
+                    "message": "You don't have any tasks to delete."
+                }
+            
+            # Step 3: Fuzzy match
+            matching_task = self._find_best_task_match(task_name, all_tasks)
+            
+            if not matching_task:
+                return {
+                    "type": "task_deletion",
+                    "data": {"searched_for": task_name},
+                    "message": f"I couldn't find a task matching '{task_name}'."
+                }
+            
+            # Step 4: Delete task (~50ms)
+            task_title = matching_task['title']
+            success = task_tool.delete_task(matching_task["id"])
+            
+            if success:
+                return {
+                    "type": "task_deletion",
+                    "data": {"deleted_task": matching_task},
+                    "message": f"I've deleted '{task_title}' from your tasks."
+                }
+            else:
+                return {
+                    "type": "task_deletion",
+                    "data": {"error": "Deletion failed"},
+                    "message": "I had trouble deleting that task."
+                }
+            
+        except Exception as e:
+            logger.error(f"Task deletion failed: {e}")
+            return {
+                "type": "task_deletion",
+                "data": {"error": str(e)},
+                "message": "I had trouble deleting that task."
             }
 
     async def _handle_daily_summary(self, transcript: str) -> Dict[str, Any]:
