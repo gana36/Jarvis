@@ -20,7 +20,13 @@ class WeatherTool:
     
     def __init__(self, gemini_model=None):
         """Initialize with GCP API key and optional Gemini model."""
-        self.api_key = os.getenv("GCP_WEATHER_API_KEY", "AIzaSyCQO0wN36dXwLYFycmn9UCx6HrDC-OQbWk")
+        from app.config import get_settings
+        settings = get_settings()
+        self.api_key = settings.gcp_weather_api_key
+        
+        if not self.api_key:
+            logger.error("GCP_WEATHER_API_KEY not found in .env file!")
+            raise ValueError("GCP_WEATHER_API_KEY must be set in .env file")
         self.weather_url = "https://weather.googleapis.com/v1/currentConditions:lookup"
         self.geocode_url = "https://maps.googleapis.com/maps/api/geocode/json"
         self.gemini = gemini_model
