@@ -336,28 +336,58 @@ Natural:"""
             }
     
     def _extract_location(self, transcript: str) -> Optional[str]:
-        """Extract location from weather query using simple keyword detection."""
-        text = transcript.lower()
-        
-        # Common weather query patterns
-        patterns = [
-            "weather in ",
-            "weather for ",
-            "what's the weather in ",
-            "how's the weather in ",
-            "tell me the weather in ",
-            "what is the weather in "
-        ]
-        
-        for pattern in patterns:
-            if pattern in text:
-                # Extract everything after the pattern
-                location = text.split(pattern, 1)[1].strip()
-                # Remove trailing punctuation
-                location = location.rstrip('?!.')
-                return location if location else None
-        
-        return None
+        """Extract location from weather query using Gemini for reliable extraction."""
+        try:
+            # Use Gemini to extract location from any weather query format
+            prompt = f"""Extract ONLY the city/location name from this weather query. Return just the city name, nothing else.
+If no location is mentioned, return "null".
+
+Examples:
+- "how is dallas weather today?" → "Dallas"
+- "what's the weather in new york?" → "New York"
+- "tell me tokyo weather" → "Tokyo"
+- "weather for san francisco" → "San Francisco"
+- "what's the weather today?" → null
+- "how's it outside?" → null
+
+Query: "{transcript}"
+
+Location:"""
+
+            response = self.gemini_service.model.generate_content(
+                prompt,
+                generation_config={"temperature": 0.0, "max_output_tokens": 20}
+            )
+            
+            location = response.text.strip().strip('"\'')
+            
+            # Handle "null" or empty responses
+            if location.lower() == "null" or not location:
+                return None
+            
+            logger.info(f"📍 Extracted location: '{location}' from '{transcript}'")
+            return location
+            
+        except Exception as e:
+            logger.warning(f"Location extraction failed: {e}, using fallback")
+            # Fallback to simple pattern matching
+            text = transcript.lower()
+            patterns = [
+                "weather in ",
+                "weather for ",
+                "what's the weather in ",
+                "how's the weather in ",
+                "tell me the weather in ",
+                "what is the weather in "
+            ]
+            
+            for pattern in patterns:
+                if pattern in text:
+                    location = text.split(pattern, 1)[1].strip()
+                    location = location.rstrip('?!.')
+                    return location if location else None
+            
+            return None
 
     async def _handle_add_task(self, transcript: str) -> Dict[str, Any]:
         """
