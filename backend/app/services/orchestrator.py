@@ -1,4 +1,5 @@
 """Orchestrator service for intent routing and handler coordination"""
+import asyncio
 import logging
 from functools import lru_cache
 from typing import Any, Dict, AsyncGenerator, Tuple, Optional, AsyncGenerator, Tuple, Optional
@@ -15,14 +16,16 @@ class OrchestratorService:
     def __init__(self):
         """Initialize orchestrator service"""
         self.gemini_service = get_gemini_service()
+        self.user_profile_cache = {}  # Session-level profile cache
         logger.info("✓ Orchestrator service initialized")
 
-    async def process_transcript(self, transcript: str) -> Dict[str, Any]:
+    async def process_transcript(self, transcript: str, user_id: str = "default") -> Dict[str, Any]:
         """
         Process transcript by classifying intent and routing to handler.
         
         Args:
             transcript: User's transcribed message
+            user_id: User identifier for profile loading
             
         Returns:
             Dict containing:
@@ -32,15 +35,21 @@ class OrchestratorService:
                 - handler_response: Handler's structured response
         """
         try:
-            # Step 1: Classify Intent using fast Gemini Flash
+            # Step 1: Load user profile (cached)
+            profile = await self._get_user_profile(user_id)
+            
+            # Step 2: Classify Intent using fast Gemini Flash
             intent_result = await self.gemini_service.classify_intent(transcript)
             intent = intent_result["intent"]
             confidence = intent_result["confidence"]
             
             logger.info(f"Orchestrator: Intent={intent}, Confidence={confidence}")
             
-            # Step 2: Route to appropriate handler (extraction happens inside handlers)
-            handler_response = await self._route_to_handler(intent, transcript, confidence)
+            # Step 3: Route to appropriate handler (extraction happens inside handlers)
+            handler_response = await self._route_to_handler(intent, transcript, confidence, profile)
+            
+            # Step 4: Extract and update profile (non-blocking)
+            asyncio.create_task(self._extract_and_update_profile(transcript, user_id))
             
             return {
                 "transcript": transcript,
@@ -59,7 +68,7 @@ class OrchestratorService:
                 "handler_response": await self._handle_general_chat(transcript),
             }
 
-    async def process_transcript_stream(self, transcript: str):
+    async def process_transcript_stream(self, transcript: str, user_id: str = "default"):
         """
         Process transcript with streaming support for faster responses.
         
@@ -69,6 +78,7 @@ class OrchestratorService:
         
         Args:
             transcript: User's transcribed message
+            user_id: User identifier for profile loading
             
         Yields:
             For GENERAL_CHAT: Text chunks as they stream from Gemini
@@ -78,7 +88,10 @@ class OrchestratorService:
             Intent and confidence for client-side handling
         """
         try:
-            # Step 1: Classify Intent
+            # Step 1: Load user profile (cached)
+            profile = await self._get_user_profile(user_id)
+            
+            # Step 2: Classify Intent
             intent_result = await self.gemini_service.classify_intent(transcript)
             intent = intent_result["intent"]
             confidence = intent_result["confidence"]
@@ -94,21 +107,92 @@ class OrchestratorService:
             # For GENERAL_CHAT: stream from Gemini for natural conversation
             if intent == "GENERAL_CHAT":
                 logger.info("Streaming from Gemini for GENERAL_CHAT")
-                async for chunk in self.gemini_service.generate_response_stream(transcript):
+                # Inject profile context into streaming
+                async for chunk in self.gemini_service.generate_response_stream(transcript, profile):
                     yield chunk, intent, confidence
             else:
                 # For structured intents: return immediate response
                 logger.info(f"Immediate response for {intent} (structured data)")
-                handler_response = await self._route_to_handler(intent, transcript, confidence)
+                handler_response = await self._route_to_handler(intent, transcript, confidence, profile)
                 yield handler_response["message"], intent, confidence
+            
+            # Extract and update profile (non-blocking)
+            asyncio.create_task(self._extract_and_update_profile(transcript, user_id))
                 
         except Exception as e:
             logger.error(f"Orchestrator streaming error: {e}")
             # Fallback to generic response
             yield "I'm having trouble processing that right now.", "GENERAL_CHAT", 0.0
 
+    async def _get_user_profile(self, user_id: str) -> Dict[str, Any]:
+        """
+        Get user profile with session-level caching.
+        
+        Args:
+            user_id: User identifier
+            
+        Returns:
+            User profile dict
+        """
+        # Check session cache first
+        if user_id in self.user_profile_cache:
+            logger.debug(f"Profile cache HIT for user: {user_id}")
+            return self.user_profile_cache[user_id]
+        
+        # Load from Firestore
+        try:
+            from app.services.profile_tool import get_profile_tool
+            profile_tool = get_profile_tool()
+            profile = profile_tool.get_or_create_profile(user_id)
+            
+            # Cache for session
+            self.user_profile_cache[user_id] = profile
+            logger.info(f"📂 Loaded profile for user: {user_id}")
+            return profile
+        except Exception as e:
+            logger.error(f"Failed to load profile: {e}")
+            # Return minimal default
+            return {
+                'user_id': user_id,
+                'name': None,
+                'timezone': 'America/New_York',
+                'dietary_preference': None,
+                'learning_level': None,
+            }
+    
+    async def _extract_and_update_profile(self, transcript: str, user_id: str):
+        """
+        Extract profile information from transcript and update Firestore (non-blocking).
+        
+        Args:
+            transcript: User's message
+            user_id: User identifier
+        """
+        try:
+            from app.services.profile_extraction import extract_profile_info, normalize_profile_data
+            from app.services.profile_tool import get_profile_tool
+            
+            # Extract profile info using LLM
+            extracted = await extract_profile_info(self.gemini_service.model, transcript)
+            
+            if extracted:
+                # Normalize the data
+                normalized = normalize_profile_data(extracted)
+                
+                # Update in Firestore
+                profile_tool = get_profile_tool()
+                profile_tool.update_profile_fields(user_id, normalized)
+                
+                # Update session cache
+                if user_id in self.user_profile_cache:
+                    self.user_profile_cache[user_id].update(normalized)
+                
+                logger.info(f"✨ Profile updated from conversation: {list(normalized.keys())}")
+        except Exception as e:
+            logger.error(f"Profile extraction/update failed: {e}")
+    
     async def _route_to_handler(
-        self, intent: str, transcript: str, confidence: float
+        self, intent: str, transcript: str, confidence: float, profile: Dict[str, Any]
     ) -> Dict[str, Any]:
         """
         Route to appropriate handler based on intent.
@@ -117,6 +201,7 @@ class OrchestratorService:
             intent: Classified intent
             transcript: User's message
             confidence: Classification confidence
+            profile: User profile for context
             
         Returns:
             Handler's structured response

@@ -72,19 +72,41 @@ Assistant:"""
             # Return friendly fallback response
             return "I'm having trouble thinking right now. Can you try again?"
 
-    async def generate_response_stream(self, user_message: str):
+    async def generate_response_stream(self, user_message: str, profile: dict = None):
         """
-        Generate a conversational response with streaming.
+        Generate a conversational response with streaming, with optional profile context.
         
         Args:
             user_message: User's transcribed message
+            profile: Optional user profile for personalization
             
         Yields:
             Text chunks as they're generated
         """
         try:
+            # Build profile context if available
+            profile_context = ""
+            if profile:
+                name = profile.get('name')
+                dietary = profile.get('dietary_preference')
+                level = profile.get('learning_level')
+                timezone = profile.get('timezone')
+                
+                context_parts = []
+                if name:
+                    context_parts.append(f"User's name: {name}")
+                if dietary:
+                    context_parts.append(f"Dietary: {dietary}")
+                if level:
+                    context_parts.append(f"Learning level: {level}")
+                if timezone:
+                    context_parts.append(f"Timezone: {timezone}")
+                
+                if context_parts:
+                    profile_context = f"Context: {', '.join(context_parts)}\n\n"
+            
             # Construct prompt with instruction for brevity
-            prompt = f"""Respond conversationally in ONE short sentence.
+            prompt = f"""{profile_context}Respond conversationally in ONE short sentence.
 
 User: {user_message}
 Assistant:"""
