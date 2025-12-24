@@ -17,6 +17,7 @@ class OrchestratorService:
         """Initialize orchestrator service"""
         self.gemini_service = get_gemini_service()
         self.user_profile_cache = {}  # Session-level profile cache
+        self.conversation_history = {}  # user_id -> list of {"role": "user/model", "parts": "..."}
         logger.info("✓ Orchestrator service initialized")
 
     async def process_transcript(self, transcript: str, user_id: str = "default") -> Dict[str, Any]:
@@ -38,17 +39,25 @@ class OrchestratorService:
             # Step 1: Load user profile (cached)
             profile = await self._get_user_profile(user_id)
             
-            # Step 2: Classify Intent using fast Gemini Flash
+            # Step 2: Get conversation history
+            history = self._get_conversation_history(user_id)
+            
+            # Step 3: Classify Intent using fast Gemini Flash
             intent_result = await self.gemini_service.classify_intent(transcript)
             intent = intent_result["intent"]
             confidence = intent_result["confidence"]
             
             logger.info(f"Orchestrator: Intent={intent}, Confidence={confidence}")
             
-            # Step 3: Route to appropriate handler (extraction happens inside handlers)
-            handler_response = await self._route_to_handler(intent, transcript, confidence, profile)
+            # Step 4: Route to appropriate handler (extraction happens inside handlers)
+            handler_response = await self._route_to_handler(intent, transcript, confidence, profile, history)
             
-            # Step 4: Extract and update profile (non-blocking)
+            # Step 5: Update conversation history for GENERAL_CHAT
+            if intent == "GENERAL_CHAT":
+                self._add_to_history(user_id, "user", transcript)
+                self._add_to_history(user_id, "model", handler_response["message"])
+            
+            # Step 6: Extract and update profile (non-blocking)
             asyncio.create_task(self._extract_and_update_profile(transcript, user_id))
             
             return {
@@ -65,7 +74,7 @@ class OrchestratorService:
                 "transcript": transcript,
                 "intent": "GENERAL_CHAT",
                 "confidence": 0.0,
-                "handler_response": await self._handle_general_chat(transcript),
+                "handler_response": await self._handle_general_chat(transcript, profile=None, history=None),
             }
 
     async def process_transcript_stream(self, transcript: str, user_id: str = "default"):
@@ -91,7 +100,10 @@ class OrchestratorService:
             # Step 1: Load user profile (cached)
             profile = await self._get_user_profile(user_id)
             
-            # Step 2: Classify Intent
+            # Step 2: Get conversation history
+            history = self._get_conversation_history(user_id)
+            
+            # Step 3: Classify Intent
             intent_result = await self.gemini_service.classify_intent(transcript)
             intent = intent_result["intent"]
             confidence = intent_result["confidence"]
@@ -107,13 +119,23 @@ class OrchestratorService:
             # For GENERAL_CHAT: stream from Gemini for natural conversation
             if intent == "GENERAL_CHAT":
                 logger.info("Streaming from Gemini for GENERAL_CHAT")
-                # Inject profile context into streaming
-                async for chunk in self.gemini_service.generate_response_stream(transcript, profile):
+                # Add user message to history
+                self._add_to_history(user_id, "user", transcript)
+                
+                # Collect response for history
+                full_response = ""
+                
+                # Stream with profile and history context
+                async for chunk in self.gemini_service.generate_response_stream(transcript, profile, history):
+                    full_response += chunk
                     yield chunk, intent, confidence
+                
+                # Add assistant response to history
+                self._add_to_history(user_id, "model", full_response)
             else:
                 # For structured intents: return immediate response
                 logger.info(f"Immediate response for {intent} (structured data)")
-                handler_response = await self._route_to_handler(intent, transcript, confidence, profile)
+                handler_response = await self._route_to_handler(intent, transcript, confidence, profile, history)
                 yield handler_response["message"], intent, confidence
             
             # Extract and update profile (non-blocking)
@@ -191,8 +213,43 @@ class OrchestratorService:
         except Exception as e:
             logger.error(f"Profile extraction/update failed: {e}")
     
+    def _get_conversation_history(self, user_id: str) -> list:
+        """
+        Get conversation history for a user.
+        
+        Args:
+            user_id: User identifier
+            
+        Returns:
+            List of conversation messages
+        """
+        return self.conversation_history.get(user_id, [])
+    
+    def _add_to_history(self, user_id: str, role: str, content: str):
+        """
+        Add a message to conversation history.
+        
+        Args:
+            user_id: User identifier
+            role: "user" or "model"
+            content: Message content
+        """
+        if user_id not in self.conversation_history:
+            self.conversation_history[user_id] = []
+        
+        self.conversation_history[user_id].append({
+            "role": role,
+            "parts": content
+        })
+        
+        # Keep only last 10 messages (5 exchanges)
+        if len(self.conversation_history[user_id]) > 10:
+            self.conversation_history[user_id] = self.conversation_history[user_id][-10:]
+        
+        logger.debug(f"History updated for {user_id}: {len(self.conversation_history[user_id])} messages")
+    
     async def _route_to_handler(
-        self, intent: str, transcript: str, confidence: float, profile: Dict[str, Any]
+        self, intent: str, transcript: str, confidence: float, profile: Dict[str, Any], history: list = None
     ) -> Dict[str, Any]:
         """
         Route to appropriate handler based on intent.
@@ -202,6 +259,7 @@ class OrchestratorService:
             transcript: User's message
             confidence: Classification confidence
             profile: User profile for context
+            history: Conversation history for context
             
         Returns:
             Handler's structured response
@@ -212,7 +270,7 @@ class OrchestratorService:
             logger.info(f"Low confidence ({confidence}), fallback to GENERAL_CHAT")
             intent = "GENERAL_CHAT"
         
-        # Handler mapping
+        # Handler mapping (note: GENERAL_CHAT needs special handling for history)
         handlers = {
             "GET_WEATHER": self._handle_get_weather,
             "ADD_TASK": self._handle_add_task,
@@ -226,15 +284,18 @@ class OrchestratorService:
             "UPDATE_CALENDAR_EVENT": self._handle_update_calendar_event,
             "DELETE_CALENDAR_EVENT": self._handle_delete_calendar_event,
             "LEARN": self._handle_learn,
-            "GENERAL_CHAT": self._handle_general_chat,
         }
         
-        # Get handler or default to general chat
-        handler = handlers.get(intent, self._handle_general_chat)
-        handler_response = await handler(transcript)
+        # Handle GENERAL_CHAT specially to pass history
+        if intent == "GENERAL_CHAT":
+            handler_response = await self._handle_general_chat(transcript, profile, history)
+        else:
+            # Get handler or default to general chat
+            handler = handlers.get(intent, lambda t: self._handle_general_chat(t, profile, history))
+            handler_response = await handler(transcript)
         
-        # Beautify the message for natural speech
-        if "message" in handler_response:
+        # Beautify the message for natural speech (skip for GENERAL_CHAT as it's already natural)
+        if "message" in handler_response and intent != "GENERAL_CHAT":
             handler_response["message"] = await self._beautify_response(
                 handler_response["message"], 
                 intent
@@ -1478,25 +1539,39 @@ Examples:
             "message": "Here's what I found about your question. This is a mock response that would contain educational content.",
         }
 
-    async def _handle_general_chat(self, transcript: str) -> Dict[str, Any]:
+    async def _handle_general_chat(self, transcript: str, profile: Dict[str, Any] = None, history: list = None) -> Dict[str, Any]:
         """
-        Handle general conversation with mock response.
+        Handle general conversation using Gemini AI.
         
         Args:
             transcript: User's conversational message
+            profile: Optional user profile for personalization
+            history: Optional conversation history for context
             
         Returns:
-            Mock conversational response
+            Conversational response from Gemini
         """
         logger.info("Handler: GENERAL_CHAT")
-        return {
-            "type": "conversation",
-            "data": {
-                "response_type": "casual",
-                "context": "general_chat",
-            },
-            "message": "I'm here to help! This is a mock conversational response. How can I assist you today?",
-        }
+        
+        try:
+            # Generate conversational response with profile and history context
+            response = await self.gemini_service.generate_response(transcript, profile, history)
+            
+            return {
+                "type": "conversation",
+                "data": {
+                    "response_type": "casual",
+                    "context": "general_chat",
+                },
+                "message": response,
+            }
+        except Exception as e:
+            logger.error(f"General chat failed: {e}")
+            return {
+                "type": "conversation",
+                "data": {"error": str(e)},
+                "message": "I'm having trouble thinking right now. Can you try again?",
+            }
 
 
 @lru_cache
