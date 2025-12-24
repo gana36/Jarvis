@@ -286,7 +286,19 @@ Examples:
 
 Input: "{user_message}"
 
-Intents: GET_WEATHER, ADD_TASK, COMPLETE_TASK, UPDATE_TASK, DELETE_TASK, LIST_TASKS, GET_TASK_REMINDERS, DAILY_SUMMARY, CREATE_CALENDAR_EVENT, UPDATE_CALENDAR_EVENT, DELETE_CALENDAR_EVENT, LEARN, GENERAL_CHAT
+Intents:
+- LEARN: factual questions, educational queries, "who is", "what is", current events, explanations
+- GET_WEATHER: weather queries
+- ADD_TASK, COMPLETE_TASK, UPDATE_TASK, DELETE_TASK, LIST_TASKS, GET_TASK_REMINDERS: task management  
+- DAILY_SUMMARY, CREATE_CALENDAR_EVENT, UPDATE_CALENDAR_EVENT, DELETE_CALENDAR_EVENT: calendar/scheduling
+- GENERAL_CHAT: greetings, casual conversation, opinions
+
+Examples:
+- "who is the president" → LEARN
+- "what are the latest news" → LEARN  
+- "how's the weather" → GET_WEATHER
+- "add task" → ADD_TASK
+- "hello" → GENERAL_CHAT
 
 Output format:
 {{"intent": "INTENT_NAME", "confidence": 0.95}}"""

@@ -1516,28 +1516,64 @@ Examples:
 
     async def _handle_learn(self, transcript: str) -> Dict[str, Any]:
         """
-        Handle educational queries with mock response.
+        Handle educational queries using Google Search grounding.
         
         Args:
             transcript: User's learning question
             
         Returns:
-            Mock educational response
+            Educational response with citations
         """
         logger.info("Handler: LEARN")
-        return {
-            "type": "educational",
-            "data": {
-                "topic": "General Knowledge",
-                "summary": "This is a mock educational response.",
-                "key_points": [
-                    "Educational content would go here",
-                    "Retrieved from knowledge base",
-                    "Structured for easy understanding",
-                ],
-            },
-            "message": "Here's what I found about your question. This is a mock response that would contain educational content.",
-        }
+        
+        try:
+            from app.services.learning_tool import get_learning_tool
+            
+            # Get learning tool
+            learning_tool = get_learning_tool()
+            
+            # Get user's learning level from profile if available (future enhancement)
+            learning_level = None
+            
+            # Answer question with search grounding
+            result = await learning_tool.answer_question(transcript, learning_level)
+            
+            # Handle errors
+            if "error" in result:
+                return {
+                    "type": "educational",
+                    "data": {"error": result["error"]},
+                    "message": result["answer"]
+                }
+            
+            # Format response message with citations
+            answer = result["answer"]
+            citations = result.get("citations", [])
+            
+            # Add citations to message if available
+            if citations:
+                citation_text = ", ".join(citations)
+                message = f"{answer} Sources: {citation_text}"
+            else:
+                message = answer
+            
+            return {
+                "type": "educational",
+                "data": {
+                    "answer": answer,
+                    "citations": citations,
+                    "confidence": result.get("confidence", "medium")
+                },
+                "message": message,
+            }
+            
+        except Exception as e:
+            logger.error(f"Learn handler failed: {e}")
+            return {
+                "type": "educational",
+                "data": {"error": str(e)},
+                "message": "I'm having trouble finding information on that right now.",
+            }
 
     async def _handle_general_chat(self, transcript: str, profile: Dict[str, Any] = None, history: list = None) -> Dict[str, Any]:
         """

@@ -31,6 +31,15 @@ class Settings(BaseSettings):
     google_oauth_client_id: str | None = None
     google_oauth_client_secret: str | None = None
     google_oauth_redirect_uri: str = "http://localhost:8000/auth/google/callback"
+    
+    # Vertex AI for LEARN intent (web search grounding)
+    vertex_ai_project_id: str | None = None
+    vertex_ai_location: str = "us-central1"
+    vertex_ai_credentials_path: str | None = None
+    vertex_ai_credentials: str | None = None  # Alternative: JSON string
+    
+    # You.com Search API for LEARN intent
+    youcom_api_key: str | None = None
 
     class Config:
         env_file = ".env"
