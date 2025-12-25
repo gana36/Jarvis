@@ -27,6 +27,7 @@ export function ProfileView({ onBack }: ProfileViewProps) {
       setProfile(data);
       setFormData({
         name: data.name || '',
+        email: data.email || '',
         location: data.location || '',
         dietary_preference: data.dietary_preference || '',
         learning_level: data.learning_level || '',
@@ -122,6 +123,16 @@ export function ProfileView({ onBack }: ProfileViewProps) {
                   value={formData.name || ''}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   placeholder="Your name"
+                  className="w-full px-4 py-2 rounded-lg bg-muted/30 border border-border/50 outline-none focus:border-primary transition-colors text-foreground"
+                />
+              </div>
+              <div>
+                <label className="text-sm text-muted-foreground block mb-2">Email</label>
+                <input
+                  type="email"
+                  value={formData.email || ''}
+                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                  placeholder="your.email@example.com"
                   className="w-full px-4 py-2 rounded-lg bg-muted/30 border border-border/50 outline-none focus:border-primary transition-colors text-foreground"
                 />
               </div>

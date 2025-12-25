@@ -29,6 +29,7 @@ class ProfileResponse(BaseModel):
 class ProfileUpdate(BaseModel):
     """Profile update request model"""
     name: Optional[str] = None
+    email: Optional[str] = None
     location: Optional[str] = None
     dietary_preference: Optional[str] = None
     learning_level: Optional[str] = None
@@ -121,7 +122,7 @@ async def clear_profile_field(
     """
     # Validate field name
     allowed_fields = [
-        'name', 'location', 'dietary_preference',
+        'name', 'email', 'location', 'dietary_preference',
         'learning_level', 'preferred_voice', 'interests'
     ]
     

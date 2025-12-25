@@ -55,6 +55,7 @@ export interface Profile {
 
 export interface ProfileUpdate {
   name?: string;
+  email?: string;
   location?: string;
   dietary_preference?: string;
   learning_level?: string;

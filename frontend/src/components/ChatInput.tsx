@@ -6,16 +6,6 @@ interface Voice {
     description: string;
 }
 
-const VOICES: Voice[] = [
-    { id: '21m00Tcm4TlvDq8ikWAM', name: 'Rachel', description: 'Neutral American female' },
-    { id: 'pNInz6obpgDQGcFmaJgB', name: 'Adam', description: 'Deep American male' },
-    { id: 'ErXwobaYiN019PkySvjV', name: 'Antoni', description: 'Well-rounded male' },
-    { id: 'TxGEqnHWrfWFTfGW9XjX', name: 'Josh', description: 'Young American male' },
-    { id: 'VR6AewLTigWG4xSOukaG', name: 'Arnold', description: 'Crisp male' },
-    { id: 'AZnzlk1XvdvUeBnXmlld', name: 'Domi', description: 'Strong female' },
-    { id: 'MF3mGyEYCl7XYWbV9V6O', name: 'Elli', description: 'Emotional female' },
-];
-
 interface Message {
     role: 'user' | 'assistant';
     content: string;
@@ -27,12 +17,32 @@ export default function ChatInput() {
     const [message, setMessage] = useState<string>('');
     const [messages, setMessages] = useState<Message[]>([]);
     const [isLoading, setIsLoading] = useState<boolean>(false);
-    const [selectedVoice, setSelectedVoice] = useState<string>(VOICES[0].id);
+    const [voices, setVoices] = useState<Voice[]>([]);
+    const [selectedVoice, setSelectedVoice] = useState<string>('');
     const [error, setError] = useState<string | null>(null);
     const [playAudio, setPlayAudio] = useState<boolean>(true);
 
     const audioRef = useRef<HTMLAudioElement | null>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
+
+    // Load voices from backend on mount
+    useEffect(() => {
+        const loadVoices = async () => {
+            try {
+                const response = await fetch('http://localhost:8000/api/profile/voices');
+                if (!response.ok) throw new Error('Failed to fetch voices');
+
+                const data = await response.json();
+                setVoices(data.voices);
+                setSelectedVoice(data.default);
+            } catch (err) {
+                console.error('Failed to load voices:', err);
+                // Fallback to a default voice ID
+                setSelectedVoice('21m00Tcm4TlvDq8ikWAM');
+            }
+        };
+        loadVoices();
+    }, []);
 
     // Auto-scroll to bottom when messages change
     useEffect(() => {
@@ -146,21 +156,25 @@ export default function ChatInput() {
                         id="chat-voice-select"
                         value={selectedVoice}
                         onChange={(e) => setSelectedVoice(e.target.value)}
-                        disabled={isLoading}
+                        disabled={isLoading || voices.length === 0}
                         style={{
                             padding: '6px 8px',
                             fontSize: '13px',
                             borderRadius: '6px',
                             border: '1px solid #d1d5db',
-                            backgroundColor: isLoading ? '#f3f4f6' : 'white',
-                            cursor: isLoading ? 'not-allowed' : 'pointer',
+                            backgroundColor: (isLoading || voices.length === 0) ? '#f3f4f6' : 'white',
+                            cursor: (isLoading || voices.length === 0) ? 'not-allowed' : 'pointer',
                         }}
                     >
-                        {VOICES.map(voice => (
-                            <option key={voice.id} value={voice.id}>
-                                {voice.name} - {voice.description}
-                            </option>
-                        ))}
+                        {voices.length === 0 ? (
+                            <option value="">Loading voices...</option>
+                        ) : (
+                            voices.map(voice => (
+                                <option key={voice.id} value={voice.id}>
+                                    {voice.name} - {voice.description}
+                                </option>
+                            ))
+                        )}
                     </select>
                 </div>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', cursor: 'pointer' }}>
