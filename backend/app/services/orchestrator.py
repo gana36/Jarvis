@@ -1,4 +1,5 @@
 """Orchestrator service for intent routing and handler coordination"""
+import asyncio
 import logging
 from functools import lru_cache
 from typing import Any, Dict, AsyncGenerator, Tuple, Optional, AsyncGenerator, Tuple, Optional
@@ -15,14 +16,17 @@ class OrchestratorService:
     def __init__(self):
         """Initialize orchestrator service"""
         self.gemini_service = get_gemini_service()
+        self.user_profile_cache = {}  # Session-level profile cache
+        self.conversation_history = {}  # user_id -> list of {"role": "user/model", "parts": "..."}
         logger.info("✓ Orchestrator service initialized")
 
-    async def process_transcript(self, transcript: str) -> Dict[str, Any]:
+    async def process_transcript(self, transcript: str, user_id: str = "default") -> Dict[str, Any]:
         """
         Process transcript by classifying intent and routing to handler.
         
         Args:
             transcript: User's transcribed message
+            user_id: User identifier for profile loading
             
         Returns:
             Dict containing:
@@ -32,15 +36,29 @@ class OrchestratorService:
                 - handler_response: Handler's structured response
         """
         try:
-            # Step 1: Classify Intent using fast Gemini Flash
+            # Step 1: Load user profile (cached)
+            profile = await self._get_user_profile(user_id)
+            
+            # Step 2: Get conversation history
+            history = self._get_conversation_history(user_id)
+            
+            # Step 3: Classify Intent using fast Gemini Flash
             intent_result = await self.gemini_service.classify_intent(transcript)
             intent = intent_result["intent"]
             confidence = intent_result["confidence"]
             
             logger.info(f"Orchestrator: Intent={intent}, Confidence={confidence}")
             
-            # Step 2: Route to appropriate handler (extraction happens inside handlers)
-            handler_response = await self._route_to_handler(intent, transcript, confidence)
+            # Step 4: Route to appropriate handler (extraction happens inside handlers)
+            handler_response = await self._route_to_handler(intent, transcript, confidence, profile, history)
+            
+            # Step 5: Update conversation history for GENERAL_CHAT
+            if intent == "GENERAL_CHAT":
+                self._add_to_history(user_id, "user", transcript)
+                self._add_to_history(user_id, "model", handler_response["message"])
+            
+            # Step 6: Extract and update profile (non-blocking)
+            asyncio.create_task(self._extract_and_update_profile(transcript, user_id))
             
             return {
                 "transcript": transcript,
@@ -56,10 +74,10 @@ class OrchestratorService:
                 "transcript": transcript,
                 "intent": "GENERAL_CHAT",
                 "confidence": 0.0,
-                "handler_response": await self._handle_general_chat(transcript),
+                "handler_response": await self._handle_general_chat(transcript, profile=None, history=None),
             }
 
-    async def process_transcript_stream(self, transcript: str):
+    async def process_transcript_stream(self, transcript: str, user_id: str = "default"):
         """
         Process transcript with streaming support for faster responses.
         
@@ -69,6 +87,7 @@ class OrchestratorService:
         
         Args:
             transcript: User's transcribed message
+            user_id: User identifier for profile loading
             
         Yields:
             For GENERAL_CHAT: Text chunks as they stream from Gemini
@@ -78,7 +97,13 @@ class OrchestratorService:
             Intent and confidence for client-side handling
         """
         try:
-            # Step 1: Classify Intent
+            # Step 1: Load user profile (cached)
+            profile = await self._get_user_profile(user_id)
+            
+            # Step 2: Get conversation history
+            history = self._get_conversation_history(user_id)
+            
+            # Step 3: Classify Intent
             intent_result = await self.gemini_service.classify_intent(transcript)
             intent = intent_result["intent"]
             confidence = intent_result["confidence"]
@@ -94,21 +119,137 @@ class OrchestratorService:
             # For GENERAL_CHAT: stream from Gemini for natural conversation
             if intent == "GENERAL_CHAT":
                 logger.info("Streaming from Gemini for GENERAL_CHAT")
-                async for chunk in self.gemini_service.generate_response_stream(transcript):
+                # Add user message to history
+                self._add_to_history(user_id, "user", transcript)
+                
+                # Collect response for history
+                full_response = ""
+                
+                # Stream with profile and history context
+                async for chunk in self.gemini_service.generate_response_stream(transcript, profile, history):
+                    full_response += chunk
                     yield chunk, intent, confidence
+                
+                # Add assistant response to history
+                self._add_to_history(user_id, "model", full_response)
             else:
                 # For structured intents: return immediate response
                 logger.info(f"Immediate response for {intent} (structured data)")
-                handler_response = await self._route_to_handler(intent, transcript, confidence)
+                handler_response = await self._route_to_handler(intent, transcript, confidence, profile, history)
                 yield handler_response["message"], intent, confidence
+            
+            # Extract and update profile (non-blocking)
+            asyncio.create_task(self._extract_and_update_profile(transcript, user_id))
                 
         except Exception as e:
             logger.error(f"Orchestrator streaming error: {e}")
             # Fallback to generic response
             yield "I'm having trouble processing that right now.", "GENERAL_CHAT", 0.0
 
+    async def _get_user_profile(self, user_id: str) -> Dict[str, Any]:
+        """
+        Get user profile with session-level caching.
+        
+        Args:
+            user_id: User identifier
+            
+        Returns:
+            User profile dict
+        """
+        # Check session cache first
+        if user_id in self.user_profile_cache:
+            logger.debug(f"Profile cache HIT for user: {user_id}")
+            return self.user_profile_cache[user_id]
+        
+        # Load from Firestore
+        try:
+            from app.services.profile_tool import get_profile_tool
+            profile_tool = get_profile_tool()
+            profile = profile_tool.get_or_create_profile(user_id)
+            
+            # Cache for session
+            self.user_profile_cache[user_id] = profile
+            logger.info(f"📂 Loaded profile for user: {user_id}")
+            return profile
+        except Exception as e:
+            logger.error(f"Failed to load profile: {e}")
+            # Return minimal default
+            return {
+                'user_id': user_id,
+                'name': None,
+                'timezone': 'America/New_York',
+                'dietary_preference': None,
+                'learning_level': None,
+            }
+    
+    async def _extract_and_update_profile(self, transcript: str, user_id: str):
+        """
+        Extract profile information from transcript and update Firestore (non-blocking).
+        
+        Args:
+            transcript: User's message
+            user_id: User identifier
+        """
+        try:
+            from app.services.profile_extraction import extract_profile_info, normalize_profile_data
+            from app.services.profile_tool import get_profile_tool
+            
+            # Extract profile info using LLM
+            extracted = await extract_profile_info(self.gemini_service.model, transcript)
+            
+            if extracted:
+                # Normalize the data
+                normalized = normalize_profile_data(extracted)
+                
+                # Update in Firestore
+                profile_tool = get_profile_tool()
+                profile_tool.update_profile_fields(user_id, normalized)
+                
+                # Update session cache
+                if user_id in self.user_profile_cache:
+                    self.user_profile_cache[user_id].update(normalized)
+                
+                logger.info(f"✨ Profile updated from conversation: {list(normalized.keys())}")
+        except Exception as e:
+            logger.error(f"Profile extraction/update failed: {e}")
+    
+    def _get_conversation_history(self, user_id: str) -> list:
+        """
+        Get conversation history for a user.
+        
+        Args:
+            user_id: User identifier
+            
+        Returns:
+            List of conversation messages
+        """
+        return self.conversation_history.get(user_id, [])
+    
+    def _add_to_history(self, user_id: str, role: str, content: str):
+        """
+        Add a message to conversation history.
+        
+        Args:
+            user_id: User identifier
+            role: "user" or "model"
+            content: Message content
+        """
+        if user_id not in self.conversation_history:
+            self.conversation_history[user_id] = []
+        
+        self.conversation_history[user_id].append({
+            "role": role,
+            "parts": content
+        })
+        
+        # Keep only last 10 messages (5 exchanges)
+        if len(self.conversation_history[user_id]) > 10:
+            self.conversation_history[user_id] = self.conversation_history[user_id][-10:]
+        
+        logger.debug(f"History updated for {user_id}: {len(self.conversation_history[user_id])} messages")
+    
     async def _route_to_handler(
-        self, intent: str, transcript: str, confidence: float
+        self, intent: str, transcript: str, confidence: float, profile: Dict[str, Any], history: list = None
     ) -> Dict[str, Any]:
         """
         Route to appropriate handler based on intent.
@@ -117,6 +258,8 @@ class OrchestratorService:
             intent: Classified intent
             transcript: User's message
             confidence: Classification confidence
+            profile: User profile for context
+            history: Conversation history for context
             
         Returns:
             Handler's structured response
@@ -127,7 +270,7 @@ class OrchestratorService:
             logger.info(f"Low confidence ({confidence}), fallback to GENERAL_CHAT")
             intent = "GENERAL_CHAT"
         
-        # Handler mapping
+        # Handler mapping (note: GENERAL_CHAT needs special handling for history)
         handlers = {
             "GET_WEATHER": self._handle_get_weather,
             "ADD_TASK": self._handle_add_task,
@@ -141,15 +284,18 @@ class OrchestratorService:
             "UPDATE_CALENDAR_EVENT": self._handle_update_calendar_event,
             "DELETE_CALENDAR_EVENT": self._handle_delete_calendar_event,
             "LEARN": self._handle_learn,
-            "GENERAL_CHAT": self._handle_general_chat,
         }
         
-        # Get handler or default to general chat
-        handler = handlers.get(intent, self._handle_general_chat)
-        handler_response = await handler(transcript)
+        # Handle GENERAL_CHAT specially to pass history
+        if intent == "GENERAL_CHAT":
+            handler_response = await self._handle_general_chat(transcript, profile, history)
+        else:
+            # Get handler or default to general chat
+            handler = handlers.get(intent, lambda t: self._handle_general_chat(t, profile, history))
+            handler_response = await handler(transcript)
         
-        # Beautify the message for natural speech
-        if "message" in handler_response:
+        # Beautify the message for natural speech (skip for GENERAL_CHAT as it's already natural)
+        if "message" in handler_response and intent != "GENERAL_CHAT":
             handler_response["message"] = await self._beautify_response(
                 handler_response["message"], 
                 intent
@@ -336,28 +482,58 @@ Natural:"""
             }
     
     def _extract_location(self, transcript: str) -> Optional[str]:
-        """Extract location from weather query using simple keyword detection."""
-        text = transcript.lower()
-        
-        # Common weather query patterns
-        patterns = [
-            "weather in ",
-            "weather for ",
-            "what's the weather in ",
-            "how's the weather in ",
-            "tell me the weather in ",
-            "what is the weather in "
-        ]
-        
-        for pattern in patterns:
-            if pattern in text:
-                # Extract everything after the pattern
-                location = text.split(pattern, 1)[1].strip()
-                # Remove trailing punctuation
-                location = location.rstrip('?!.')
-                return location if location else None
-        
-        return None
+        """Extract location from weather query using Gemini for reliable extraction."""
+        try:
+            # Use Gemini to extract location from any weather query format
+            prompt = f"""Extract ONLY the city/location name from this weather query. Return just the city name, nothing else.
+If no location is mentioned, return "null".
+
+Examples:
+- "how is dallas weather today?" → "Dallas"
+- "what's the weather in new york?" → "New York"
+- "tell me tokyo weather" → "Tokyo"
+- "weather for san francisco" → "San Francisco"
+- "what's the weather today?" → null
+- "how's it outside?" → null
+
+Query: "{transcript}"
+
+Location:"""
+
+            response = self.gemini_service.model.generate_content(
+                prompt,
+                generation_config={"temperature": 0.0, "max_output_tokens": 20}
+            )
+            
+            location = response.text.strip().strip('"\'')
+            
+            # Handle "null" or empty responses
+            if location.lower() == "null" or not location:
+                return None
+            
+            logger.info(f"📍 Extracted location: '{location}' from '{transcript}'")
+            return location
+            
+        except Exception as e:
+            logger.warning(f"Location extraction failed: {e}, using fallback")
+            # Fallback to simple pattern matching
+            text = transcript.lower()
+            patterns = [
+                "weather in ",
+                "weather for ",
+                "what's the weather in ",
+                "how's the weather in ",
+                "tell me the weather in ",
+                "what is the weather in "
+            ]
+            
+            for pattern in patterns:
+                if pattern in text:
+                    location = text.split(pattern, 1)[1].strip()
+                    location = location.rstrip('?!.')
+                    return location if location else None
+            
+            return None
 
     async def _handle_add_task(self, transcript: str) -> Dict[str, Any]:
         """
@@ -1340,48 +1516,94 @@ Examples:
 
     async def _handle_learn(self, transcript: str) -> Dict[str, Any]:
         """
-        Handle educational queries with mock response.
+        Handle educational queries using Google Search grounding.
         
         Args:
             transcript: User's learning question
             
         Returns:
-            Mock educational response
+            Educational response with citations
         """
         logger.info("Handler: LEARN")
-        return {
-            "type": "educational",
-            "data": {
-                "topic": "General Knowledge",
-                "summary": "This is a mock educational response.",
-                "key_points": [
-                    "Educational content would go here",
-                    "Retrieved from knowledge base",
-                    "Structured for easy understanding",
-                ],
-            },
-            "message": "Here's what I found about your question. This is a mock response that would contain educational content.",
-        }
+        
+        try:
+            from app.services.learning_tool import get_learning_tool
+            
+            # Get learning tool
+            learning_tool = get_learning_tool()
+            
+            # Get user's learning level from profile if available (future enhancement)
+            learning_level = None
+            
+            # Answer question with search grounding
+            result = await learning_tool.answer_question(transcript, learning_level)
+            
+            # Handle errors
+            if "error" in result:
+                return {
+                    "type": "educational",
+                    "data": {"error": result["error"]},
+                    "message": result["answer"]
+                }
+            
+            # Format response - keep answer and citations separate
+            answer = result["answer"]
+            citations = result.get("citations", [])
+            
+            # Message contains only the answer (UI will display citations separately)
+            message = answer
+            
+            return {
+                "type": "educational",
+                "data": {
+                    "answer": answer,
+                    "citations": citations,
+                    "confidence": result.get("confidence", "medium")
+                },
+                "message": message,
+            }
+            
+        except Exception as e:
+            logger.error(f"Learn handler failed: {e}")
+            return {
+                "type": "educational",
+                "data": {"error": str(e)},
+                "message": "I'm having trouble finding information on that right now.",
+            }
 
-    async def _handle_general_chat(self, transcript: str) -> Dict[str, Any]:
+    async def _handle_general_chat(self, transcript: str, profile: Dict[str, Any] = None, history: list = None) -> Dict[str, Any]:
         """
-        Handle general conversation with mock response.
+        Handle general conversation using Gemini AI.
         
         Args:
             transcript: User's conversational message
+            profile: Optional user profile for personalization
+            history: Optional conversation history for context
             
         Returns:
-            Mock conversational response
+            Conversational response from Gemini
         """
         logger.info("Handler: GENERAL_CHAT")
-        return {
-            "type": "conversation",
-            "data": {
-                "response_type": "casual",
-                "context": "general_chat",
-            },
-            "message": "I'm here to help! This is a mock conversational response. How can I assist you today?",
-        }
+        
+        try:
+            # Generate conversational response with profile and history context
+            response = await self.gemini_service.generate_response(transcript, profile, history)
+            
+            return {
+                "type": "conversation",
+                "data": {
+                    "response_type": "casual",
+                    "context": "general_chat",
+                },
+                "message": response,
+            }
+        except Exception as e:
+            logger.error(f"General chat failed: {e}")
+            return {
+                "type": "conversation",
+                "data": {"error": str(e)},
+                "message": "I'm having trouble thinking right now. Can you try again?",
+            }
 
 
 @lru_cache

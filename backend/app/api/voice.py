@@ -24,6 +24,7 @@ class IngestResponse(BaseModel):
     audio_base64: str | None = None  # Base64-encoded audio from TTS
     intent: str | None = None  # Classified intent
     confidence: float | None = None  # Classification confidence
+    data: dict | None = None  # Additional data from handler (citations, etc.)
 
 
 @router.post("/ingest", response_model=IngestResponse)
@@ -139,6 +140,7 @@ async def ingest_audio(
             audio_base64=audio_base64,
             intent=intent_result.get("intent") if intent_result else None,
             confidence=intent_result.get("confidence") if intent_result else None,
+            data=orchestrator_data,  # Include handler data (citations, etc.)
         )
     except HTTPException:
         # Re-raise HTTP exceptions

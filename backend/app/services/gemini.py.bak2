@@ -154,8 +154,6 @@ Jarvis:"""
             # Construct prompt with personality and context
             prompt = f"""You are Jarvis, a helpful and friendly personal AI assistant. You are concise, warm, and conversational. Respond naturally as if chatting with a friend. Keep responses brief (1-2 sentences).
 
-
-Your capabilities: weather queries, task management (add/complete/update/delete tasks), calendar events (create/update/delete), daily summaries, task reminders, and general conversation.
 {profile_context}{history_context}User: {user_message}
 Jarvis:"""
 
@@ -286,19 +284,7 @@ Examples:
 
 Input: "{user_message}"
 
-Intents:
-- LEARN: factual questions, educational queries, "who is", "what is", current events, explanations
-- GET_WEATHER: weather queries
-- ADD_TASK, COMPLETE_TASK, UPDATE_TASK, DELETE_TASK, LIST_TASKS, GET_TASK_REMINDERS: task management  
-- DAILY_SUMMARY, CREATE_CALENDAR_EVENT, UPDATE_CALENDAR_EVENT, DELETE_CALENDAR_EVENT: calendar/scheduling
-- GENERAL_CHAT: greetings, casual conversation, opinions
-
-Examples:
-- "who is the president" → LEARN
-- "what are the latest news" → LEARN  
-- "how's the weather" → GET_WEATHER
-- "add task" → ADD_TASK
-- "hello" → GENERAL_CHAT
+Intents: GET_WEATHER, ADD_TASK, COMPLETE_TASK, UPDATE_TASK, DELETE_TASK, LIST_TASKS, GET_TASK_REMINDERS, DAILY_SUMMARY, CREATE_CALENDAR_EVENT, UPDATE_CALENDAR_EVENT, DELETE_CALENDAR_EVENT, LEARN, GENERAL_CHAT
 
 Output format:
 {{"intent": "INTENT_NAME", "confidence": 0.95}}"""
