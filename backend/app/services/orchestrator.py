@@ -273,7 +273,7 @@ class OrchestratorService:
         
         # Handler mapping (note: GENERAL_CHAT needs special handling for history)
         handlers = {
-            "GET_WEATHER": self._handle_get_weather,
+            "GET_WEATHER": lambda t: self._handle_get_weather(t, profile),
             "ADD_TASK": lambda t: self._handle_add_task(t, user_id),
             "COMPLETE_TASK": lambda t: self._handle_complete_task(t, user_id),
             "UPDATE_TASK": lambda t: self._handle_update_task(t, user_id),
@@ -432,12 +432,12 @@ Natural:"""
             return raw_message
 
 
-    async def _handle_get_weather(self, transcript: str) -> Dict[str, Any]:
+    async def _handle_get_weather(self, transcript: str, profile: Dict[str, Any] = None) -> Dict[str, Any]:
         """
         Handle weather requests using Gemini with Google Search grounding.
         Includes 15-minute caching for performance.
         """
-        logger.info("Handler: GET_WEATHER")
+        logger.info(f"Handler: GET_WEATHER with profile: {profile.get('location') if profile else 'none'}")
         
         try:
             from app.services.weather_tool import get_weather_tool
@@ -445,11 +445,14 @@ Natural:"""
             # Extract location from transcript (simple keyword detection)
             location = self._extract_location(transcript)
             
+            # Get profile location if available
+            profile_location = profile.get('location') if profile else None
+            
             # Get weather tool
             weather_tool = get_weather_tool()
             
-            # Get weather (auto-location if no city specified)
-            weather = await weather_tool.get_weather(city=location)
+            # Get weather (city priority → profile_location → auto-location)
+            weather = await weather_tool.get_weather(city=location, profile_location=profile_location)
             
             # Handle errors
             if weather.get("error"):
@@ -1088,6 +1091,15 @@ Examples:
             # Parse date range from transcript
             start_date, end_date = self._parse_date_range(transcript)
             
+            # Check if authorized first
+            if not calendar_tool.service:
+                logger.info(f"User {user_id} requested summary but calendar is not authorized")
+                return {
+                    "type": "summary",
+                    "data": {"error": "not_authorized"},
+                    "message": "I don't have access to your calendar yet. You can connect it in the Profile settings!",
+                }
+
             # Fetch events for the specified date range
             events = calendar_tool.get_events_in_range(start_date, end_date)
             
