@@ -1,13 +1,14 @@
 """Voice API endpoints for audio ingestion"""
 import logging
 
-from fastapi import APIRouter, File, UploadFile, HTTPException, Form
+from fastapi import APIRouter, File, UploadFile, HTTPException, Form, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.services.stt import get_stt_service
 from app.services.gemini import get_gemini_service
 from app.services.tts import get_tts_service
+from app.middleware import get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -31,6 +32,7 @@ class IngestResponse(BaseModel):
 async def ingest_audio(
     audio: UploadFile = File(...),
     voice_id: str | None = Form(None),
+    user_id: str = Depends(get_current_user)
 ):
     """
     Ingest audio from frontend and transcribe using Google Cloud Speech-to-Text.

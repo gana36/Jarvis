@@ -9,8 +9,18 @@ import type {
   ProfileUpdate,
   VoicesResponse,
 } from '@/types/api';
+import { auth } from '@/config/firebase';
 
 const API_BASE_URL = 'http://localhost:8000/api';
+
+// Helper to get auth token
+async function getAuthToken(): Promise<string | null> {
+  const user = auth.currentUser;
+  if (!user) {
+    return null;
+  }
+  return await user.getIdToken();
+}
 
 // Voice API
 export const voiceAPI = {
@@ -21,8 +31,16 @@ export const voiceAPI = {
       formData.append('voice_id', voiceId);
     }
 
+    // Get auth token
+    const token = await getAuthToken();
+    const headers: HeadersInit = {};
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
     const response = await fetch(`${API_BASE_URL}/voice/ingest`, {
       method: 'POST',
+      headers,
       body: formData,
     });
 
