@@ -4,12 +4,14 @@ import logging
 import os
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import RedirectResponse, HTMLResponse
 from google_auth_oauthlib.flow import Flow
 from pydantic import BaseModel
 
 from app.config import get_settings
+from app.middleware import get_current_user
+from app.services.calendar_tool import get_calendar_tool
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -17,8 +19,13 @@ router = APIRouter()
 # Token storage path
 TOKEN_FILE = Path("calendar_token.json")
 
-# Calendar scopes - includes write access
-SCOPES = ['https://www.googleapis.com/auth/calendar']
+# Calendar scopes - includes write access and basic profile info
+SCOPES = [
+    'https://www.googleapis.com/auth/calendar',
+    'openid',
+    'https://www.googleapis.com/auth/userinfo.profile',
+    'https://www.googleapis.com/auth/userinfo.email'
+]
 
 
 class AuthStatus(BaseModel):
@@ -28,7 +35,7 @@ class AuthStatus(BaseModel):
 
 
 @router.get("/google/calendar")
-async def google_calendar_auth():
+async def google_calendar_auth(user_id: str = Depends(get_current_user)):
     """
     Initiate Google OAuth flow for Calendar access.
     
@@ -58,23 +65,26 @@ async def google_calendar_auth():
     )
     
     # Generate authorization URL
-    authorization_url, state = flow.authorization_url(
-        access_type='offline',  # Get refresh token
+    # We pass user_id in the state parameter to associate the token with the correct user on callback
+    authorization_url, _ = flow.authorization_url(
+        access_type='offline',
         include_granted_scopes='true',
-        prompt='consent'  # Force consent to get refresh token
+        prompt='consent',
+        state=user_id
     )
     
-    logger.info(f"Redirecting to Google OAuth: {authorization_url}")
+    logger.info(f"Redirecting user {user_id} to Google OAuth: {authorization_url}")
     return RedirectResponse(url=authorization_url)
 
 
 @router.get("/google/callback")
-async def google_callback(code: str | None = None, error: str | None = None):
+async def google_callback(code: str | None = None, state: str | None = None, error: str | None = None):
     """
     Handle OAuth callback from Google.
     
     Args:
         code: Authorization code from Google
+        state: The user_id we passed in
         error: Error message if authorization failed
     """
     if error:
@@ -96,6 +106,11 @@ async def google_callback(code: str | None = None, error: str | None = None):
     if not code:
         raise HTTPException(status_code=400, detail="No authorization code provided")
     
+    if not state:
+        logger.error("No state (user_id) provided in callback")
+        raise HTTPException(status_code=400, detail="No user identification provided")
+    
+    user_id = state
     settings = get_settings()
     
     # Create OAuth flow
@@ -118,20 +133,11 @@ async def google_callback(code: str | None = None, error: str | None = None):
         flow.fetch_token(code=code)
         credentials = flow.credentials
         
-        # Save tokens to file
-        token_data = {
-            'token': credentials.token,
-            'refresh_token': credentials.refresh_token,
-            'token_uri': credentials.token_uri,
-            'client_id': credentials.client_id,
-            'client_secret': credentials.client_secret,
-            'scopes': credentials.scopes
-        }
+        # Save tokens using CalendarTool which handles Firestore
+        calendar_tool = get_calendar_tool(user_id=user_id)
+        calendar_tool._save_credentials(credentials)
         
-        with open(TOKEN_FILE, 'w') as f:
-            json.dump(token_data, f)
-        
-        logger.info("✓ OAuth tokens saved successfully")
+        logger.info(f"✓ OAuth tokens saved successfully for user {user_id}")
         
         return HTMLResponse(
             content="""
@@ -198,30 +204,20 @@ async def google_callback(code: str | None = None, error: str | None = None):
 
 
 @router.get("/calendar/status", response_model=AuthStatus)
-async def calendar_status():
+async def calendar_status(user_id: str = Depends(get_current_user)):
     """
-    Check if calendar is authorized.
+    Check if calendar is authorized for authenticated user.
     
     Returns authorization status and whether token exists.
     """
-    token_exists = TOKEN_FILE.exists()
-    
-    if not token_exists:
-        return AuthStatus(authorized=False, calendar_connected=False)
-    
-    # Try to load and validate token
     try:
-        with open(TOKEN_FILE, 'r') as f:
-            token_data = json.load(f)
-        
-        # Check if required fields exist
-        has_token = 'token' in token_data
-        has_refresh = 'refresh_token' in token_data
+        calendar_tool = get_calendar_tool(user_id=user_id)
+        is_connected = calendar_tool.credentials is not None and calendar_tool.credentials.valid
         
         return AuthStatus(
-            authorized=has_token and has_refresh,
-            calendar_connected=has_token and has_refresh
+            authorized=is_connected,
+            calendar_connected=is_connected
         )
     except Exception as e:
-        logger.error(f"Failed to read token file: {e}")
+        logger.error(f"Failed to check calendar status for {user_id}: {e}")
         return AuthStatus(authorized=False, calendar_connected=False)

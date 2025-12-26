@@ -1,5 +1,7 @@
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, ListTodo, User } from 'lucide-react';
+import { X, ListTodo, User, LogOut } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
 
 interface SettingsPanelProps {
   isOpen: boolean;
@@ -8,6 +10,19 @@ interface SettingsPanelProps {
 }
 
 export function SettingsPanel({ isOpen, onClose, onNavigate }: SettingsPanelProps) {
+  const navigate = useNavigate();
+  const { logout } = useAuth();
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+      onClose();
+      navigate('/login');
+    } catch (error) {
+      console.error('Logout failed:', error);
+    }
+  };
+
   const menuItems = [
     {
       id: 'tasks' as const,
@@ -46,7 +61,7 @@ export function SettingsPanel({ isOpen, onClose, onNavigate }: SettingsPanelProp
               stiffness: 300,
               damping: 30,
             }}
-            className="fixed right-0 top-0 bottom-0 w-80 glass-panel border-l border-border/50 z-50 p-6"
+            className="fixed right-0 top-0 bottom-0 w-80 glass-panel border-l border-border/50 z-50 p-6 flex flex-col"
           >
             {/* Header */}
             <div className="flex items-center justify-between mb-8">
@@ -62,7 +77,7 @@ export function SettingsPanel({ isOpen, onClose, onNavigate }: SettingsPanelProp
             </div>
 
             {/* Menu Items */}
-            <div className="space-y-3">
+            <div className="space-y-3 flex-1">
               {menuItems.map((item) => (
                 <button
                   key={item.id}
@@ -87,6 +102,28 @@ export function SettingsPanel({ isOpen, onClose, onNavigate }: SettingsPanelProp
                   </div>
                 </button>
               ))}
+            </div>
+
+            {/* Logout Button */}
+            <div className="pt-4 border-t border-border/30">
+              <button
+                onClick={handleLogout}
+                className="w-full glass-panel rounded-lg p-4 hover:border-red-500/40 transition-all text-left group"
+              >
+                <div className="flex items-start gap-3">
+                  <div className="p-2 rounded-md bg-red-500/10 group-hover:bg-red-500/20 transition-colors">
+                    <LogOut size={20} className="text-red-500" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-foreground mb-1">
+                      Logout
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Sign out of your account
+                    </p>
+                  </div>
+                </div>
+              </button>
             </div>
           </motion.div>
         </>

@@ -32,10 +32,6 @@ class WeatherTool:
         self.gemini = gemini_model
         self.cache = {}
         self.cache_ttl = 900  # 15 minutes
-        
-        # Default user location (Tallahassee, FL)
-        self.default_location = "Tallahassee, FL"
-        self.default_coords = (30.4383, -84.2807)
     
     async def correct_city_name(self, city_input: str) -> str:
         """Use Gemini to correct misspellings in city names."""
@@ -87,24 +83,44 @@ Corrected:"""
         except Exception as e:
             logger.error(f"Geocoding error: {e}")
             return None
+            
+    async def _get_auto_location(self) -> Optional[Tuple[float, float, str]]:
+        """Attempt to get location via IP-based geolocation."""
+        try:
+            logger.info("Attempting auto-location detection via IP...")
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                # Use ip-api.com (free, no key needed for low volume)
+                response = await client.get("http://ip-api.com/json")
+                data = response.json()
+                if data.get('status') == 'success':
+                    lat, lon = data.get('lat'), data.get('lon')
+                    city, region = data.get('city'), data.get('regionName')
+                    location_name = f"{city}, {region}"
+                    logger.info(f"✓ Auto-detected location: {location_name} ({lat}, {lon})")
+                    return (lat, lon, location_name)
+        except Exception as e:
+            logger.warning(f"IP-based location detection failed: {e}")
+        return None
     
     async def get_weather(
         self,
         city: Optional[str] = None,
+        profile_location: Optional[str] = None,
         latitude: Optional[float] = None,
         longitude: Optional[float] = None
     ) -> Dict[str, Any]:
         """
-        Get weather. Priority: city → coords → default location.
+        Get weather. Priority: city → profile_location → coords → default location.
         
         Args:
-            city: City name (will be spell-corrected)
+            city: Explicit city name from transcript
+            profile_location: User's profile location
             latitude: Manual coordinates
             longitude: Manual coordinates
         """
         location_name = None
         
-        # Priority 1: City name (with spelling correction)
+        # Priority 1: Explicit city name (with spelling correction)
         if city:
             # Correct spelling with LLM
             corrected_city = await self.correct_city_name(city)
@@ -119,11 +135,26 @@ Corrected:"""
                     "message": f"Couldn't find location: {city}"
                 }
         
-        # Priority 2: Use provided coordinates
-        elif latitude is None or longitude is None:
-            # Priority 3: Default location
-            latitude, longitude = self.default_coords
-            location_name = self.default_location
+        # Priority 2: Profile location
+        elif profile_location:
+            # Geocode the profile location
+            geocode_result = await self.geocode_city(profile_location)
+            if geocode_result:
+                latitude, longitude, location_name = geocode_result
+            else:
+                logger.warning(f"Failed to geocode profile location: {profile_location}. Falling back to default.")
+        
+        # Priority 3: Use provided coordinates
+        if (latitude is None or longitude is None) and not location_name:
+            # Priority 4: Dynamic Auto-location (IP-based)
+            auto_loc = await self._get_auto_location()
+            if auto_loc:
+                latitude, longitude, location_name = auto_loc
+            else:
+                # Absolute fallback if everything fails (approximate center of US or just return error)
+                logger.warning("All location detection failed. Using last-resort fallback.")
+                latitude, longitude = 37.0902, -95.7129
+                location_name = "United States"
         
         # Check cache
         cache_key = f"{latitude:.2f},{longitude:.2f}"

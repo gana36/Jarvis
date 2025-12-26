@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     
     # You.com Search API for LEARN intent
     youcom_api_key: str | None = None
+    
+    # NewsAPI.org key for NEWS intent
+    news_api_key: str | None = None
 
     class Config:
         env_file = ".env"

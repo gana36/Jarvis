@@ -2,10 +2,11 @@
 import logging
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 
 from app.services.profile_tool import get_profile_tool
+from app.middleware import get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -39,12 +40,12 @@ class ProfileUpdate(BaseModel):
 
 
 @router.get("/profile", response_model=ProfileResponse)
-async def get_profile(user_id: str = Query(default="default")):
+async def get_profile(user_id: str = Depends(get_current_user)):
     """
     Get user profile by ID.
     
     Args:
-        user_id: User identifier (default: "default")
+        user_id: Authenticated user identifier
         
     Returns:
         User profile data
@@ -63,17 +64,17 @@ async def get_profile(user_id: str = Query(default="default")):
         )
 
 
-@router.patch("/profile", response_model=ProfileResponse)
+@router.put("/profile", response_model=ProfileResponse)
 async def update_profile(
     updates: ProfileUpdate,
-    user_id: str = Query(default="default")
+    user_id: str = Depends(get_current_user)
 ):
     """
     Update user profile fields.
     
     Args:
-        updates: Fields to update
-        user_id: User identifier (default: "default")
+        updates: Profile fields to update
+        user_id: Authenticated user identifier
         
     Returns:
         Updated profile data
@@ -105,17 +106,66 @@ async def update_profile(
         )
 
 
+
+class ProfileExtractRequest(BaseModel):
+    """Request model for profile extraction"""
+    transcript: str
+
+
+@router.post("/profile/extract")
+async def extract_profile(
+    request: ProfileExtractRequest,
+    user_id: str = Depends(get_current_user)
+):
+    """
+    Extract profile information from user transcript.
+    
+    Args:
+        request: Request containing transcript
+        user_id: Authenticated user identifier
+        
+    Returns:
+        Extracted profile data or confirmation of update
+    """
+    logger.info(f"Extracting profile for user {user_id} from transcript: {request.transcript[:50]}...")
+    
+    try:
+        from app.services.orchestrator import get_orchestrator
+        orchestrator = get_orchestrator()
+        
+        # We can reuse the internal orchestrator method
+        # It's an internal method but we need its logic here for a manual trigger
+        await orchestrator._extract_and_update_profile(request.transcript, user_id)
+        
+        # Return updated profile to confirm
+        profile_tool = get_profile_tool()
+        updated_profile = profile_tool.get_or_create_profile(user_id)
+        
+        return {
+            "success": True,
+            "message": "Manual profile extraction triggered",
+            "profile": ProfileResponse(**updated_profile)
+        }
+            
+    except Exception as e:
+        logger.error(f"Profile extraction failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Profile extraction failed: {str(e)}"
+        )
+
+
 @router.delete("/profile/field/{field_name}")
 async def clear_profile_field(
     field_name: str,
-    user_id: str = Query(default="default")
+    user_id: str = Depends(get_current_user)
 ):
     """
     Clear a specific profile field.
     
     Args:
         field_name: Name of field to clear
-        user_id: User identifier (default: "default")
+        user_id: Authenticated user identifier
         
     Returns:
         Success message

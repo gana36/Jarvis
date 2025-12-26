@@ -14,10 +14,14 @@ logger = logging.getLogger(__name__)
 class TaskTool:
     """Service for managing tasks in Google Firestore"""
 
-    def __init__(self):
+    def __init__(self, user_id: str = "default"):
         """
         Initialize Task Tool with Firestore.
-        Uses existing Google Cloud credentials from environment.
+        
+        Args:
+            user_id: User identifier for data isolation. 
+                    - "default": Uses global /tasks collection (backward compatible)
+                    - Any other value: Uses /users/{user_id}/tasks collection
         """
         # Initialize Firebase Admin if not already done
         if not firebase_admin._apps:
@@ -42,8 +46,15 @@ class TaskTool:
         
         # Get Firestore client
         self.db = firestore.client()
-        self.collection = self.db.collection('tasks')
-        logger.info("✓ Task Tool initialized with Firestore")
+        self.user_id = user_id
+        
+        # Use user-scoped collection for authenticated users, global collection for default
+        if user_id == "default":
+            self.collection = self.db.collection('tasks')
+            logger.info("✓ Task Tool initialized with global tasks collection")
+        else:
+            self.collection = self.db.collection('users').document(user_id).collection('tasks')
+            logger.info(f"✓ Task Tool initialized for user: {user_id}")
 
     def add_task(
         self,
@@ -288,11 +299,14 @@ class TaskTool:
 
 
 @lru_cache
-def get_task_tool() -> TaskTool:
+def get_task_tool(user_id: str = "default") -> TaskTool:
     """
     Get cached Task Tool instance.
+    
+    Args:
+        user_id: User identifier for data isolation (default: "default" for global collection)
     
     Returns:
         Configured TaskTool instance with Firestore
     """
-    return TaskTool()
+    return TaskTool(user_id)

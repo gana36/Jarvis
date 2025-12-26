@@ -1,13 +1,14 @@
 """Voice API endpoints for audio ingestion"""
 import logging
 
-from fastapi import APIRouter, File, UploadFile, HTTPException, Form
+from fastapi import APIRouter, File, UploadFile, HTTPException, Form, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.services.stt import get_stt_service
 from app.services.gemini import get_gemini_service
 from app.services.tts import get_tts_service
+from app.middleware import get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -31,6 +32,7 @@ class IngestResponse(BaseModel):
 async def ingest_audio(
     audio: UploadFile = File(...),
     voice_id: str | None = Form(None),
+    user_id: str = Depends(get_current_user)
 ):
     """
     Ingest audio from frontend and transcribe using Google Cloud Speech-to-Text.
@@ -85,7 +87,7 @@ async def ingest_audio(
                 from app.services.orchestrator import get_orchestrator
                 
                 orchestrator = get_orchestrator()
-                orchestrator_result = await orchestrator.process_transcript(transcript)
+                orchestrator_result = await orchestrator.process_transcript(transcript, user_id)
                 
                 # Extract intent info for response
                 intent_result = {
@@ -214,7 +216,7 @@ async def ingest_audio_stream(
                 
                 # Stream text from orchestrator (handles intent routing)
                 async def text_generator():
-                    async for text_chunk, chunk_intent, chunk_confidence in orchestrator.process_transcript_stream(transcript):
+                    async for text_chunk, chunk_intent, chunk_confidence in orchestrator.process_transcript_stream(transcript, user_id):
                         # Capture intent/confidence from first chunk for headers
                         if intent_header == "GENERAL_CHAT": # Only update on first valid intent
                             intent_header = chunk_intent

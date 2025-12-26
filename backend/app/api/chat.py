@@ -1,10 +1,11 @@
 """Text chat API endpoints"""
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 
 from app.services.tts import get_tts_service
+from app.middleware import get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -24,15 +25,20 @@ class ChatResponse(BaseModel):
     audio_base64: str | None = None
     intent: str | None = None
     confidence: float | None = None
+    data: dict | None = None
 
 
 @router.post("/send", response_model=ChatResponse)
-async def send_message(request: ChatRequest):
+async def send_message(
+    request: ChatRequest,
+    user_id: str = Depends(get_current_user)
+):
     """
     Process text message and generate AI response.
     
     Args:
         request: ChatRequest with user message and optional voice_id
+        user_id: Authenticated user ID
         
     Returns:
         AI response with optional TTS audio
@@ -44,14 +50,14 @@ async def send_message(request: ChatRequest):
         )
     
     user_message = request.message.strip()
-    logger.info(f"Processing text message: '{user_message}'")
+    logger.info(f"Processing text message from user {user_id}: '{user_message}'")
     
     try:
         # Use orchestrator for intent classification and routing
         from app.services.orchestrator import get_orchestrator
         
         orchestrator = get_orchestrator()
-        orchestrator_result = await orchestrator.process_transcript(user_message)
+        orchestrator_result = await orchestrator.process_transcript(user_message, user_id)
         
         # Extract intent info
         intent = orchestrator_result["intent"]
@@ -59,6 +65,7 @@ async def send_message(request: ChatRequest):
         
         # Get AI response
         ai_response = orchestrator_result["handler_response"]["message"]
+        orchestrator_data = orchestrator_result["handler_response"].get("data")
         
         logger.info(f"AI Response: {ai_response}")
         
@@ -83,6 +90,7 @@ async def send_message(request: ChatRequest):
             audio_base64=audio_base64,
             intent=intent,
             confidence=confidence,
+            data=orchestrator_data,
         )
         
     except ValueError as e:

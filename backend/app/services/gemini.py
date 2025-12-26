@@ -213,7 +213,7 @@ Current date: {current_date} ({day_of_week})
 
 Input: "{user_message}"
 
-Intents: GET_WEATHER, ADD_TASK, DAILY_SUMMARY, CREATE_CALENDAR_EVENT, UPDATE_CALENDAR_EVENT, DELETE_CALENDAR_EVENT, LEARN, GENERAL_CHAT
+Intents: GET_WEATHER, ADD_TASK, DAILY_SUMMARY, CREATE_CALENDAR_EVENT, UPDATE_CALENDAR_EVENT, DELETE_CALENDAR_EVENT, LEARN, GET_NEWS, GENERAL_CHAT
 
 For calendar intents, extract:
 - title: event name (clean, no articles)
@@ -291,11 +291,13 @@ Intents:
 - GET_WEATHER: weather queries
 - ADD_TASK, COMPLETE_TASK, UPDATE_TASK, DELETE_TASK, LIST_TASKS, GET_TASK_REMINDERS: task management  
 - DAILY_SUMMARY, CREATE_CALENDAR_EVENT, UPDATE_CALENDAR_EVENT, DELETE_CALENDAR_EVENT: calendar/scheduling
+- GET_NEWS: latest news, breaking updates, "what's the news", news about [topic], daily briefing
 - GENERAL_CHAT: greetings, casual conversation, opinions
 
 Examples:
 - "who is the president" → LEARN
-- "what are the latest news" → LEARN  
+- "what are the latest news" → GET_NEWS
+- "any news about apple?" → GET_NEWS
 - "how's the weather" → GET_WEATHER
 - "add task" → ADD_TASK
 - "hello" → GENERAL_CHAT

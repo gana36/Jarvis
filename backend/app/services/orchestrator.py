@@ -50,7 +50,7 @@ class OrchestratorService:
             logger.info(f"Orchestrator: Intent={intent}, Confidence={confidence}")
             
             # Step 4: Route to appropriate handler (extraction happens inside handlers)
-            handler_response = await self._route_to_handler(intent, transcript, confidence, profile, history)
+            handler_response = await self._route_to_handler(intent, transcript, confidence, profile, history, user_id)
             
             # Step 5: Update conversation history for GENERAL_CHAT
             if intent == "GENERAL_CHAT":
@@ -135,7 +135,7 @@ class OrchestratorService:
             else:
                 # For structured intents: return immediate response
                 logger.info(f"Immediate response for {intent} (structured data)")
-                handler_response = await self._route_to_handler(intent, transcript, confidence, profile, history)
+                handler_response = await self._route_to_handler(intent, transcript, confidence, profile, history, user_id)
                 yield handler_response["message"], intent, confidence
             
             # Extract and update profile (non-blocking)
@@ -249,7 +249,7 @@ class OrchestratorService:
         logger.debug(f"History updated for {user_id}: {len(self.conversation_history[user_id])} messages")
     
     async def _route_to_handler(
-        self, intent: str, transcript: str, confidence: float, profile: Dict[str, Any], history: list = None
+        self, intent: str, transcript: str, confidence: float, profile: Dict[str, Any], history: list = None, user_id: str = "default"
     ) -> Dict[str, Any]:
         """
         Route to appropriate handler based on intent.
@@ -260,6 +260,7 @@ class OrchestratorService:
             confidence: Classification confidence
             profile: User profile for context
             history: Conversation history for context
+            user_id: User identifier for data isolation
             
         Returns:
             Handler's structured response
@@ -272,18 +273,19 @@ class OrchestratorService:
         
         # Handler mapping (note: GENERAL_CHAT needs special handling for history)
         handlers = {
-            "GET_WEATHER": self._handle_get_weather,
-            "ADD_TASK": self._handle_add_task,
-            "COMPLETE_TASK": self._handle_complete_task,
-            "UPDATE_TASK": self._handle_update_task,
-            "DELETE_TASK": self._handle_delete_task,
-            "LIST_TASKS": self._handle_list_tasks,
-            "GET_TASK_REMINDERS": self._handle_get_task_reminders,
-            "DAILY_SUMMARY": self._handle_daily_summary,
-            "CREATE_CALENDAR_EVENT": self._handle_create_calendar_event,
-            "UPDATE_CALENDAR_EVENT": self._handle_update_calendar_event,
-            "DELETE_CALENDAR_EVENT": self._handle_delete_calendar_event,
+            "GET_WEATHER": lambda t: self._handle_get_weather(t, profile),
+            "ADD_TASK": lambda t: self._handle_add_task(t, user_id),
+            "COMPLETE_TASK": lambda t: self._handle_complete_task(t, user_id),
+            "UPDATE_TASK": lambda t: self._handle_update_task(t, user_id),
+            "DELETE_TASK": lambda t: self._handle_delete_task(t, user_id),
+            "LIST_TASKS": lambda t: self._handle_list_tasks(t, user_id),
+            "GET_TASK_REMINDERS": lambda t: self._handle_get_task_reminders(t, user_id),
+            "DAILY_SUMMARY": lambda t: self._handle_daily_summary(t, user_id),
+            "CREATE_CALENDAR_EVENT": lambda t: self._handle_create_calendar_event(t, user_id),
+            "UPDATE_CALENDAR_EVENT": lambda t: self._handle_update_calendar_event(t, user_id),
+            "DELETE_CALENDAR_EVENT": lambda t: self._handle_delete_calendar_event(t, user_id),
             "LEARN": self._handle_learn,
+            "GET_NEWS": self._handle_news,
         }
         
         # Handle GENERAL_CHAT specially to pass history
@@ -430,12 +432,12 @@ Natural:"""
             return raw_message
 
 
-    async def _handle_get_weather(self, transcript: str) -> Dict[str, Any]:
+    async def _handle_get_weather(self, transcript: str, profile: Dict[str, Any] = None) -> Dict[str, Any]:
         """
         Handle weather requests using Gemini with Google Search grounding.
         Includes 15-minute caching for performance.
         """
-        logger.info("Handler: GET_WEATHER")
+        logger.info(f"Handler: GET_WEATHER with profile: {profile.get('location') if profile else 'none'}")
         
         try:
             from app.services.weather_tool import get_weather_tool
@@ -443,11 +445,14 @@ Natural:"""
             # Extract location from transcript (simple keyword detection)
             location = self._extract_location(transcript)
             
+            # Get profile location if available
+            profile_location = profile.get('location') if profile else None
+            
             # Get weather tool
             weather_tool = get_weather_tool()
             
-            # Get weather (auto-location if no city specified)
-            weather = await weather_tool.get_weather(city=location)
+            # Get weather (city priority → profile_location → auto-location)
+            weather = await weather_tool.get_weather(city=location, profile_location=profile_location)
             
             # Handle errors
             if weather.get("error"):
@@ -535,7 +540,7 @@ Location:"""
             
             return None
 
-    async def _handle_add_task(self, transcript: str) -> Dict[str, Any]:
+    async def _handle_add_task(self, transcript: str, user_id: str = "default") -> Dict[str, Any]:
         """
         Handle task creation requests with priority and due date extraction.
         
@@ -620,7 +625,7 @@ Examples:
                     logger.warning(f"Failed to parse due date '{due_date_str}': {e}")
             
             # Create task in Firestore
-            task_tool = get_task_tool()
+            task_tool = get_task_tool(user_id)
             task = task_tool.add_task(
                 title=title,
                 status="pending",
@@ -653,7 +658,7 @@ Examples:
             }
 
 
-    async def _handle_complete_task(self, transcript: str) -> Dict[str, Any]:
+    async def _handle_complete_task(self, transcript: str, user_id: str = "default") -> Dict[str, Any]:
         """
         Mark task as completed.
         
@@ -683,7 +688,7 @@ Examples:
                 }
             
             # Step 2: Get pending tasks (~50ms)
-            task_tool = get_task_tool()
+            task_tool = get_task_tool(user_id)
             pending_tasks = task_tool.list_tasks(status_filter="pending")
             
             if not pending_tasks:
@@ -719,7 +724,7 @@ Examples:
                 "data": {"error": str(e)},
                 "message": "I had trouble completing that task."
             }
-    async def _handle_update_task(self, transcript: str) -> Dict[str, Any]:
+    async def _handle_update_task(self, transcript: str, user_id: str = "default") -> Dict[str, Any]:
         """
         Update task fields (priority, title, status).
         
@@ -752,7 +757,7 @@ Examples:
                 }
             
             # Step 2: Get all tasks
-            task_tool = get_task_tool()
+            task_tool = get_task_tool(user_id)
             all_tasks = task_tool.list_tasks()
             
             if not all_tasks:
@@ -810,7 +815,7 @@ Examples:
                 "data": {"error": str(e)},
                 "message": "I had trouble updating that task."
             }
-    async def _handle_delete_task(self, transcript: str) -> Dict[str, Any]:
+    async def _handle_delete_task(self, transcript: str, user_id: str = "default") -> Dict[str, Any]:
         """
         Delete task permanently.
         
@@ -840,7 +845,7 @@ Examples:
                 }
             
             # Step 2: Get all tasks (including completed)
-            task_tool = get_task_tool()
+            task_tool = get_task_tool(user_id)
             all_tasks = task_tool.list_tasks()
             
             if not all_tasks:
@@ -885,7 +890,7 @@ Examples:
                 "message": "I had trouble deleting that task."
             }
 
-    async def _handle_list_tasks(self, transcript: str) -> Dict[str, Any]:
+    async def _handle_list_tasks(self, transcript: str, user_id: str = "default") -> Dict[str, Any]:
         """List all pending tasks with optional priority filtering."""
         logger.info("Handler: LIST_TASKS")
         
@@ -904,7 +909,7 @@ Examples:
                 priority_filter = "low"
             
             # Get all pending tasks (simple, no LLM extraction)
-            task_tool = get_task_tool()
+            task_tool = get_task_tool(user_id)
             all_tasks = task_tool.list_tasks(status_filter="pending")
             
             # Apply priority filter if detected
@@ -961,7 +966,7 @@ Examples:
             }
 
 
-    async def _handle_get_task_reminders(self, transcript: str) -> Dict[str, Any]:
+    async def _handle_get_task_reminders(self, transcript: str, user_id: str = "default") -> Dict[str, Any]:
         """Compile and prioritize task reminders."""
         logger.info("Handler: GET_TASK_REMINDERS")
         
@@ -975,7 +980,7 @@ Examples:
             soon_end = (now + timedelta(days=3)).replace(hour=23, minute=59, second=59)
             
             # Get all pending tasks
-            task_tool = get_task_tool()
+            task_tool = get_task_tool(user_id)
             tasks = task_tool.list_tasks(status_filter="pending")
             
             # Categorize
@@ -1063,34 +1068,44 @@ Examples:
                 "message": "I had trouble getting your reminders."
             }
 
-    async def _handle_daily_summary(self, transcript: str) -> Dict[str, Any]:
+    async def _handle_daily_summary(self, transcript: str, user_id: str = "default") -> Dict[str, Any]:
         """
         Handle daily summary requests with real calendar data.
         Supports date references like "today", "tomorrow", "next Monday".
         
         Args:
             transcript: User's summary request
+            user_id: User identifier for data isolation
             
         Returns:
             Daily summary with calendar events
         """
-        logger.info("Handler: DAILY_SUMMARY")
+        logger.info(f"Handler: DAILY_SUMMARY for user {user_id}")
         
         try:
             # Try to get real calendar events
             from app.services.calendar_tool import get_calendar_tool
             
-            calendar_tool = get_calendar_tool()
+            calendar_tool = get_calendar_tool(user_id=user_id)
             
             # Parse date range from transcript
             start_date, end_date = self._parse_date_range(transcript)
             
+            # Check if authorized first
+            if not calendar_tool.service:
+                logger.info(f"User {user_id} requested summary but calendar is not authorized")
+                return {
+                    "type": "summary",
+                    "data": {"error": "not_authorized"},
+                    "message": "I don't have access to your calendar yet. You can connect it in the Profile settings!",
+                }
+
             # Fetch events for the specified date range
             events = calendar_tool.get_events_in_range(start_date, end_date)
             
             # Get tasks for comprehensive summary
             from app.services.task_tool import get_task_tool
-            task_tool = get_task_tool()
+            task_tool = get_task_tool(user_id)
             all_tasks = task_tool.list_tasks(status_filter="pending")
             
             # Categorize tasks by due date
@@ -1209,23 +1224,24 @@ Examples:
             "message": "Today you completed 5 tasks and attended 2 meetings. Great progress!",
         }
 
-    async def _handle_create_calendar_event(self, transcript: str) -> Dict[str, Any]:
+    async def _handle_create_calendar_event(self, transcript: str, user_id: str = "default") -> Dict[str, Any]:
         """
         Handle calendar event creation requests.
         
         Args:
             transcript: User's create request
+            user_id: User identifier for data isolation
             
         Returns:
             Creation confirmation or error
         """
-        logger.info("Handler: CREATE_CALENDAR_EVENT")
+        logger.info(f"Handler: CREATE_CALENDAR_EVENT for user {user_id}")
         
         try:
             from app.services.calendar_tool import get_calendar_tool
             from datetime import datetime, timedelta
             
-            calendar_tool = get_calendar_tool()
+            calendar_tool = get_calendar_tool(user_id=user_id)
             
             # Step 2: Extract event details using dedicated method
             logger.info(f"Extracting event details from: {transcript}")
@@ -1303,23 +1319,24 @@ Examples:
                 "message": "I had trouble creating that calendar event. Please try again."
             }
 
-    async def _handle_update_calendar_event(self, transcript: str) -> Dict[str, Any]:
+    async def _handle_update_calendar_event(self, transcript: str, user_id: str = "default") -> Dict[str, Any]:
         """
         Handle calendar event update requests.
         
         Args:
             transcript: User's update request
+            user_id: User identifier for data isolation
             
         Returns:
             Update confirmation or error
         """
-        logger.info("Handler: UPDATE_CALENDAR_EVENT")
+        logger.info(f"Handler: UPDATE_CALENDAR_EVENT for user {user_id}")
         
         try:
             from app.services.calendar_tool import get_calendar_tool
             from datetime import datetime, timedelta
             
-            calendar_tool = get_calendar_tool()
+            calendar_tool = get_calendar_tool(user_id=user_id)
             
             # Step 2: Extract update details
             logger.info(f"Extracting update details from: {transcript}")
@@ -1423,22 +1440,23 @@ Examples:
                 "message": "I had trouble updating that calendar event. Please try again."
             }
 
-    async def _handle_delete_calendar_event(self, transcript: str) -> Dict[str, Any]:
+    async def _handle_delete_calendar_event(self, transcript: str, user_id: str = "default") -> Dict[str, Any]:
         """
         Handle calendar event deletion requests.
         
         Args:
             transcript: User's delete request
+            user_id: User identifier for data isolation
             
         Returns:
             Deletion confirmation or error
         """
-        logger.info("Handler: DELETE_CALENDAR_EVENT")
+        logger.info(f"Handler: DELETE_CALENDAR_EVENT for user {user_id}")
         
         try:
             from app.services.calendar_tool import get_calendar_tool
             
-            calendar_tool = get_calendar_tool()
+            calendar_tool = get_calendar_tool(user_id=user_id)
             
             # Step 2: Extract event name from transcript
             # Use simple extraction - just pull event name from natural language
@@ -1570,6 +1588,59 @@ Examples:
                 "data": {"error": str(e)},
                 "message": "I'm having trouble finding information on that right now.",
             }
+    async def _handle_news(self, transcript: str) -> Dict[str, Any]:
+        """
+        Handle news requests using NewsAPI.org.
+        """
+        logger.info("Handler: GET_NEWS")
+        
+        try:
+            from app.services.news_tool import get_news_tool
+            
+            # Extract news query using Gemini for cleaner results
+            prompt = f"""Extract the news topic or search query from this text. 
+Return ONLY the topic. If it's a general request like "latest news", return "top headlines".
+
+Examples:
+- "what's the latest news on tech?" → "technology"
+- "any news about apple?" → "Apple"
+- "give me the daily briefing" → "top headlines"
+
+Query: "{transcript}"
+
+Topic:"""
+
+            response = self.gemini_service.model.generate_content(
+                prompt,
+                generation_config={"temperature": 0.0, "max_output_tokens": 20}
+            )
+            
+            topic = response.text.strip().strip('"\'')
+            if not topic:
+                topic = "top headlines"
+            
+            logger.info(f"📰 News topic: '{topic}'")
+            
+            # Get news tool
+            news_tool = get_news_tool()
+            
+            # Get news briefing
+            result = await news_tool.get_news_briefing(topic)
+            
+            return {
+                "type": "news",
+                "data": result.get("data", {}),
+                "message": result.get("message", f"Here are the latest updates on {topic}.")
+            }
+            
+        except Exception as e:
+            logger.error(f"News handler failed: {e}")
+            return {
+                "type": "news",
+                "data": {"error": str(e)},
+                "message": "I'm having trouble getting the news right now."
+            }
+
 
     async def _handle_general_chat(self, transcript: str, profile: Dict[str, Any] = None, history: list = None) -> Dict[str, Any]:
         """

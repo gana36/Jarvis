@@ -2,10 +2,11 @@
 import logging
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import BaseModel
 
 from app.services.task_tool import get_task_tool
+from app.middleware import get_current_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -39,7 +40,10 @@ class TaskResponse(BaseModel):
 
 
 @router.post("", response_model=TaskResponse, status_code=201)
-async def create_task(request: CreateTaskRequest):
+async def create_task(
+    request: CreateTaskRequest,
+    user_id: str = Depends(get_current_user)
+):
     """
     Create a new task.
     
@@ -50,7 +54,7 @@ async def create_task(request: CreateTaskRequest):
         Created task data with auto-generated ID
     """
     try:
-        task_tool = get_task_tool()
+        task_tool = get_task_tool(user_id)
         
         # Parse due_date if provided
         due_date = None
@@ -81,7 +85,10 @@ async def create_task(request: CreateTaskRequest):
 
 
 @router.get("", response_model=list[TaskResponse])
-async def list_tasks(status: str | None = Query(None, description="Filter by status (pending, completed, cancelled)")):
+async def list_tasks(
+    status: str | None = Query(None, description="Filter by status (pending, completed, cancelled)"),
+    user_id: str = Depends(get_current_user)
+):
     """
     List all tasks, optionally filtered by status.
     
@@ -92,7 +99,7 @@ async def list_tasks(status: str | None = Query(None, description="Filter by sta
         List of tasks
     """
     try:
-        task_tool = get_task_tool()
+        task_tool = get_task_tool(user_id)
         tasks = task_tool.list_tasks(status_filter=status)
         return tasks
         
@@ -102,7 +109,10 @@ async def list_tasks(status: str | None = Query(None, description="Filter by sta
 
 
 @router.get("/{task_id}", response_model=TaskResponse)
-async def get_task(task_id: str):
+async def get_task(
+    task_id: str,
+    user_id: str = Depends(get_current_user)
+):
     """
     Get a single task by ID.
     
@@ -113,7 +123,7 @@ async def get_task(task_id: str):
         Task data
     """
     try:
-        task_tool = get_task_tool()
+        task_tool = get_task_tool(user_id)
         task = task_tool.get_task(task_id)
         
         if not task:
@@ -129,7 +139,11 @@ async def get_task(task_id: str):
 
 
 @router.patch("/{task_id}", response_model=TaskResponse)
-async def update_task(task_id: str, request: UpdateTaskRequest):
+async def update_task(
+    task_id: str,
+    request: UpdateTaskRequest,
+    user_id: str = Depends(get_current_user)
+):
     """
     Update task fields.
     
@@ -141,7 +155,7 @@ async def update_task(task_id: str, request: UpdateTaskRequest):
         Updated task data
     """
     try:
-        task_tool = get_task_tool()
+        task_tool = get_task_tool(user_id)
         
         # Build updates dictionary (only include non-None values)
         updates = {}
@@ -177,7 +191,10 @@ async def update_task(task_id: str, request: UpdateTaskRequest):
 
 
 @router.delete("/{task_id}", status_code=204)
-async def delete_task(task_id: str):
+async def delete_task(
+    task_id: str,
+    user_id: str = Depends(get_current_user)
+):
     """
     Delete task permanently.
     
@@ -188,7 +205,7 @@ async def delete_task(task_id: str):
         No content on success
     """
     try:
-        task_tool = get_task_tool()
+        task_tool = get_task_tool(user_id)
         success = task_tool.delete_task(task_id)
         
         if not success:

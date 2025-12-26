@@ -144,12 +144,16 @@ class LearningTool:
                 title = result.get('title', '')
                 description = result.get('description', '')
                 url_link = result.get('url', '')
+                thumbnail = result.get('thumbnail_url') or result.get('favicon_url')
                 
                 if title and description:
                     context_parts.append(f"Source {i}: {title}\n{description}")
-                    # Extract domain for citation
-                    domain = url_link.split('//')[1].split('/')[0] if '//' in url_link else url_link
-                    citations.append(domain)
+                    # Return rich citation data with thumbnail
+                    citations.append({
+                        'url': url_link,
+                        'title': title,
+                        'thumbnail': thumbnail
+                    })
             
             context = "\n\n".join(context_parts)
             

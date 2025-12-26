@@ -11,27 +11,38 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
+import firebase_admin
+from firebase_admin import credentials, firestore
+
 logger = logging.getLogger(__name__)
 
-# Token storage path
-TOKEN_FILE = Path("calendar_token.json")
+# Default collection for credentials
+CREDENTIALS_COLLECTION = "credentials"
 
 
 class CalendarTool:
     """Service for interacting with Google Calendar API using OAuth"""
 
-    def __init__(self, calendar_id: str = "primary"):
+    def __init__(self, user_id: str = "default", calendar_id: str = "primary"):
         """
         Initialize Calendar Tool with OAuth.
         
         Args:
+            user_id: User identifier for data isolation
             calendar_id: Calendar ID to use (default: "primary")
         """
+        self.user_id = user_id
         self.calendar_id = calendar_id
         self.service = None
         self._cache = {}  # Session-based cache
         self._cache_timestamp = None
         self._cache_ttl = 300  # Cache for 5 minutes
+        
+        # Initialize Firebase if needed
+        if not firebase_admin._apps:
+            firebase_admin.initialize_app()
+        
+        self.db = firestore.client()
         
         # Load OAuth credentials
         self.credentials = self._load_credentials()
@@ -45,19 +56,30 @@ class CalendarTool:
 
     def _load_credentials(self) -> Credentials | None:
         """
-        Load OAuth credentials from token file.
+        Load OAuth credentials from Firestore.
         
         Returns:
             Credentials object or None if not authorized
         """
-        if not TOKEN_FILE.exists():
-            logger.info("No OAuth token found. User needs to authorize.")
-            return None
-        
         try:
-            # Load token data from file
-            with open(TOKEN_FILE, 'r') as f:
-                token_data = json.load(f)
+            # Load token data from Firestore
+            doc_ref = self.db.collection('users').document(self.user_id).collection('credentials').document('google_calendar')
+            doc = doc_ref.get()
+            
+            if not doc.exists:
+                # Check for legacy token file just in case for "default" user
+                if self.user_id == "default" and Path("calendar_token.json").exists():
+                    logger.info("Migrating legacy calendar_token.json to Firestore...")
+                    with open("calendar_token.json", 'r') as f:
+                        token_data = json.load(f)
+                    creds = Credentials(**token_data)
+                    self._save_credentials(creds)
+                    return creds
+                
+                logger.info(f"No OAuth token found in Firestore for user {self.user_id}.")
+                return None
+            
+            token_data = doc.to_dict()
             
             # Create credentials from token data
             creds = Credentials(
@@ -85,10 +107,12 @@ class CalendarTool:
             return None
     
     def _save_credentials(self, creds: Credentials):
-        """Save credentials to token file"""
+        """Save credentials to Firestore"""
         try:
-            with open(TOKEN_FILE, 'w') as f:
-                f.write(creds.to_json())
+            token_data = json.loads(creds.to_json())
+            doc_ref = self.db.collection('users').document(self.user_id).collection('credentials').document('google_calendar')
+            doc_ref.set(token_data)
+            logger.info(f"✓ Saved credentials to Firestore for user {self.user_id}")
         except Exception as e:
             logger.error(f"Failed to save credentials: {e}")
 
@@ -436,12 +460,14 @@ class CalendarTool:
         return time_since_cache < self._cache_ttl
 
 
-@lru_cache
-def get_calendar_tool() -> CalendarTool:
+def get_calendar_tool(user_id: str = "default") -> CalendarTool:
     """
-    Get cached Calendar Tool instance.
+    Get Calendar Tool instance.
     
+    Args:
+        user_id: User identifier for data isolation
+        
     Returns:
         Configured CalendarTool instance with OAuth
     """
-    return CalendarTool(calendar_id="primary")
+    return CalendarTool(user_id=user_id, calendar_id="primary")
