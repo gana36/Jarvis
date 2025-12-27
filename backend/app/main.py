@@ -1,12 +1,24 @@
 # FastAPI entry point
+
+# Load .env file FIRST before any other imports
+from dotenv import load_dotenv
+load_dotenv()
+
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, voice, chat, tasks, profile
-from app.config import setup_google_credentials
+from app.api import auth, voice, chat, tasks, profile, fitbit_auth, gmail_auth
+from app.config import setup_google_credentials, get_settings
 
 # Set up Google Cloud credentials from .env
 setup_google_credentials()
+
+# Set GOOGLE_CLOUD_PROJECT for Firebase (it needs this in OS env, not just Settings)
+settings = get_settings()
+if settings.google_project_id and not os.getenv('GOOGLE_CLOUD_PROJECT'):
+    os.environ['GOOGLE_CLOUD_PROJECT'] = settings.google_project_id
+    print(f"Set GOOGLE_CLOUD_PROJECT to {settings.google_project_id}")
 
 app = FastAPI(
     title="Mini Jarvis API",
@@ -28,6 +40,8 @@ app.include_router(voice.router, prefix="/api/voice", tags=["voice"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
+app.include_router(fitbit_auth.router, prefix="/auth", tags=["fitbit-auth"])
+app.include_router(gmail_auth.router, prefix="/auth", tags=["gmail-auth"])
 app.include_router(profile.router, prefix="/api", tags=["profile"])
 
 

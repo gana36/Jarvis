@@ -291,6 +291,11 @@ Intents:
 - GET_WEATHER: weather queries
 - ADD_TASK, COMPLETE_TASK, UPDATE_TASK, DELETE_TASK, LIST_TASKS, GET_TASK_REMINDERS: task management  
 - DAILY_SUMMARY, CREATE_CALENDAR_EVENT, UPDATE_CALENDAR_EVENT, DELETE_CALENDAR_EVENT: calendar/scheduling
+- CHECK_EMAIL: check emails, unread messages, inbox status, "any new emails?", email summary
+- SEARCH_EMAIL: find specific emails, "emails from Bob", search for emails about a topic
+- REMEMBER_THIS: user wants you to remember something, "remember that", "don't forget", store fact
+- RECALL_MEMORY: user asks what you remember, "what do you know about me", "what did I tell you"
+- FORGET_THIS: user wants to delete a memory, "forget that", "delete memory"
 - GET_NEWS: latest news, breaking updates, "what's the news", news about [topic], daily briefing
 - GENERAL_CHAT: greetings, casual conversation, opinions
 
@@ -300,6 +305,11 @@ Examples:
 - "any news about apple?" → GET_NEWS
 - "how's the weather" → GET_WEATHER
 - "add task" → ADD_TASK
+- "do I have any new emails?" → CHECK_EMAIL
+- "find emails from John" → SEARCH_EMAIL
+- "remember that my wife's birthday is March 15" → REMEMBER_THIS
+- "what do you know about my family?" → RECALL_MEMORY
+- "forget what I told you about my job" → FORGET_THIS
 - "hello" → GENERAL_CHAT
 
 Output format:

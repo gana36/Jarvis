@@ -6,6 +6,9 @@ from typing import Any, Dict, AsyncGenerator, Tuple, Optional, AsyncGenerator, T
 from datetime import datetime, timedelta
 
 from app.services.gemini import get_gemini_service
+from app.services.fitbit_tool import get_fitbit_tool
+from app.services.gmail_tool import get_gmail_tool
+from app.services.memory_service import get_memory_service
 
 logger = logging.getLogger(__name__)
 
@@ -284,6 +287,11 @@ class OrchestratorService:
             "CREATE_CALENDAR_EVENT": lambda t: self._handle_create_calendar_event(t, user_id),
             "UPDATE_CALENDAR_EVENT": lambda t: self._handle_update_calendar_event(t, user_id),
             "DELETE_CALENDAR_EVENT": lambda t: self._handle_delete_calendar_event(t, user_id),
+            "CHECK_EMAIL": lambda t: self._handle_check_email(t, user_id),
+            "SEARCH_EMAIL": lambda t: self._handle_search_email(t, user_id),
+            "REMEMBER_THIS": lambda t: self._handle_remember_this(t, user_id),
+            "RECALL_MEMORY": lambda t: self._handle_recall_memory(t, user_id),
+            "FORGET_THIS": lambda t: self._handle_forget_this(t, user_id),
             "LEARN": self._handle_learn,
             "GET_NEWS": self._handle_news,
         }
@@ -1125,12 +1133,19 @@ Examples:
             priority_order = {'high': 0, 'medium': 1, 'low': 2, None: 3}
             overdue_tasks.sort(key=lambda x: priority_order.get(x.get('priority'), 3))
             due_today_tasks.sort(key=lambda x: priority_order.get(x.get('priority'), 3))
-            
-            
+
+            # Fetch Fitbit health data
+            fitbit_tool = get_fitbit_tool()
+            health_summary = fitbit_tool.get_daily_summary(start_date)
+
             if events:
                 # Use real calendar data
                 summary_message_parts = [calendar_tool.summarize_events(events)]
-                
+
+                # Add health data if available
+                if health_summary:
+                    summary_message_parts.append(f"\n\n💪 Health Summary:\n{health_summary}")
+
                 # Add overdue tasks
                 if overdue_tasks:
                     summary_message_parts.append(f"\n\n⚠️ Overdue ({len(overdue_tasks)} task{'s' if len(overdue_tasks) != 1 else ''}):")
@@ -1175,19 +1190,25 @@ Examples:
             else:
                 # No events found
                 logger.info("No calendar events found for specified date range")
-                
+
                 # Determine date context
                 now = datetime.now().astimezone()
                 is_today = start_date.date() == now.date()
                 is_tomorrow = start_date.date() == (now + timedelta(days=1)).date()
-                
+
                 if is_today:
                     date_msg = "today"
                 elif is_tomorrow:
                     date_msg = "tomorrow"
                 else:
                     date_msg = f"on {start_date.strftime('%A, %B %d')}"
-                
+
+                # Build message with health data if available
+                if health_summary:
+                    message = f"You have no events scheduled {date_msg}.\n\n💪 Health Summary:\n{health_summary}"
+                else:
+                    message = f"You have no events scheduled {date_msg}."
+
                 return {
                     "type": "summary",
                     "data": {
@@ -1196,7 +1217,7 @@ Examples:
                         "event_count": 0,
                         "source": "google_calendar"
                     },
-                    "message": f"You have no events scheduled {date_msg}.",
+                    "message": message,
                 }
                 
         except Exception as e:
@@ -1641,6 +1662,481 @@ Topic:"""
                 "message": "I'm having trouble getting the news right now."
             }
 
+    async def _handle_check_email(self, transcript: str, user_id: str = "default") -> Dict[str, Any]:
+        """
+        Handle email check requests - get unread count and recent emails.
+        Extracts parameters from user request like "last 5 emails", "unread emails", etc.
+        
+        Args:
+            transcript: User's request (e.g., "show me my last 5 emails")
+            user_id: User identifier for data isolation
+            
+        Returns:
+            Email summary with requested emails
+        """
+        logger.info(f"Handler: CHECK_EMAIL for user {user_id}")
+        
+        try:
+            gmail_tool = get_gmail_tool(user_id=user_id)
+            
+            # Check if authorized
+            if not gmail_tool.service:
+                logger.info(f"User {user_id} requested email check but Gmail is not authorized")
+                return {
+                    "type": "email",
+                    "data": {"error": "not_authorized"},
+                    "message": "I don't have access to your Gmail yet. You can connect it in the Profile settings!"
+                }
+            
+            # Extract email parameters from user's request using Gemini
+            import json
+            prompt = f"""Extract email query parameters from this request. Return JSON only.
+
+Request: "{transcript}"
+
+Extract:
+- count: number of emails requested (default 5 if not specified)
+- filter: "unread", "all", or "today" (default "unread" for checking emails)
+- summarize: true if user wants a summary, false for just listing
+
+Examples:
+"show me my last 5 emails" -> {{"count": 5, "filter": "all", "summarize": false}}
+"do I have any new emails" -> {{"count": 3, "filter": "unread", "summarize": false}}
+"summarize my last 10 emails" -> {{"count": 10, "filter": "all", "summarize": true}}
+"check my inbox" -> {{"count": 5, "filter": "unread", "summarize": false}}
+
+JSON:"""
+
+            try:
+                response = self.gemini_service.model.generate_content(
+                    prompt,
+                    generation_config={"temperature": 0.0, "max_output_tokens": 100}
+                )
+                response_text = response.text.strip()
+                
+                # Extract JSON
+                if "```json" in response_text:
+                    response_text = response_text.split("```json")[1].split("```")[0].strip()
+                elif "```" in response_text:
+                    response_text = response_text.split("```")[1].split("```")[0].strip()
+                
+                params = json.loads(response_text)
+                email_count = min(params.get("count", 5), 20)  # Cap at 20
+                email_filter = params.get("filter", "unread")
+                summarize = params.get("summarize", False)
+                
+                logger.info(f"📧 Email params: count={email_count}, filter={email_filter}, summarize={summarize}")
+            except Exception as e:
+                logger.warning(f"Failed to parse email params, using defaults: {e}")
+                email_count = 5
+                email_filter = "unread"
+                summarize = False
+            
+            # Build query based on filter
+            query = ""
+            if email_filter == "unread":
+                query = "is:unread"
+            elif email_filter == "today":
+                from datetime import datetime
+                today = datetime.now().strftime("%Y/%m/%d")
+                query = f"after:{today}"
+            # "all" = no filter
+            
+            # Get unread count for context
+            unread_count = gmail_tool.get_unread_count()
+            
+            # Get emails based on extracted parameters
+            emails = gmail_tool.get_recent_emails(max_results=email_count, query=query)
+            
+            # Build response
+            if not emails:
+                if email_filter == "unread":
+                    message = "You have no unread emails. Your inbox is all caught up!"
+                else:
+                    message = f"I couldn't find any emails matching your request."
+            else:
+                # Summary response
+                if summarize:
+                    message = gmail_tool.summarize_emails(emails)
+                else:
+                    # List response
+                    if email_filter == "unread":
+                        message = f"You have {unread_count} unread email{'s' if unread_count != 1 else ''}."
+                        if unread_count > 0:
+                            message += f" Here are the latest {min(len(emails), email_count)}:\n"
+                    else:
+                        message = f"Here are your last {len(emails)} email{'s' if len(emails) != 1 else ''}:\n"
+                    
+                    for i, email in enumerate(emails, 1):
+                        sender = email.get('from', 'Unknown')
+                        if '<' in sender:
+                            sender = sender.split('<')[0].strip()
+                        subject = email.get('subject', '(No Subject)')
+                        if len(subject) > 50:
+                            subject = subject[:47] + "..."
+                        unread_icon = "📬" if email.get('is_unread') else "📭"
+                        message += f"\n{i}. {unread_icon} '{subject}' from {sender}"
+            
+            return {
+                "type": "email",
+                "data": {
+                    "unread_count": unread_count,
+                    "emails": emails,
+                    "count_requested": email_count,
+                    "filter": email_filter,
+                    "source": "gmail"
+                },
+                "message": message
+            }
+            
+        except Exception as e:
+            logger.error(f"Check email handler failed: {e}")
+            return {
+                "type": "email",
+                "data": {"error": str(e)},
+                "message": "I'm having trouble checking your emails right now."
+            }
+
+    async def _handle_search_email(self, transcript: str, user_id: str = "default") -> Dict[str, Any]:
+        """
+        Handle email search requests - find specific emails.
+        
+        Args:
+            transcript: User's request (e.g., "find emails from John")
+            user_id: User identifier for data isolation
+            
+        Returns:
+            Search results with matching emails
+        """
+        logger.info(f"Handler: SEARCH_EMAIL for user {user_id}")
+        
+        try:
+            gmail_tool = get_gmail_tool(user_id=user_id)
+            
+            # Check if authorized
+            if not gmail_tool.service:
+                logger.info(f"User {user_id} requested email search but Gmail is not authorized")
+                return {
+                    "type": "email_search",
+                    "data": {"error": "not_authorized"},
+                    "message": "I don't have access to your Gmail yet. You can connect it in the Profile settings!"
+                }
+            
+            # Extract search query using Gemini
+            prompt = f"""Extract the Gmail search query from this request. 
+Return ONLY the Gmail search syntax. Use Gmail operators like from:, subject:, to:, is:unread, etc.
+
+Examples:
+- "find emails from John" → "from:John"
+- "emails about meeting" → "subject:meeting"
+- "messages from boss last week" → "from:boss newer_than:7d"
+- "unread emails from sarah" → "from:sarah is:unread"
+
+Request: "{transcript}"
+
+Gmail query:"""
+
+            response = self.gemini_service.model.generate_content(
+                prompt,
+                generation_config={"temperature": 0.0, "max_output_tokens": 50}
+            )
+            
+            query = response.text.strip().strip('"\'')
+            if not query:
+                query = transcript  # Fallback to raw transcript
+            
+            logger.info(f"📧 Gmail search query: '{query}'")
+            
+            # Search emails
+            results = gmail_tool.search_emails(query=query, max_results=5)
+            
+            if not results:
+                return {
+                    "type": "email_search",
+                    "data": {"query": query, "results": []},
+                    "message": f"I couldn't find any emails matching '{query}'."
+                }
+            
+            # Build response
+            message = f"I found {len(results)} email{'s' if len(results) != 1 else ''} matching your search:\n"
+            
+            for i, email in enumerate(results[:3], 1):
+                sender = email.get('from', 'Unknown')
+                if '<' in sender:
+                    sender = sender.split('<')[0].strip()
+                subject = email.get('subject', '(No Subject)')
+                if len(subject) > 40:
+                    subject = subject[:37] + "..."
+                unread = "📬" if email.get('is_unread') else "📭"
+                message += f"\n{i}. {unread} '{subject}' from {sender}"
+            
+            if len(results) > 3:
+                message += f"\n\n...and {len(results) - 3} more."
+            
+            return {
+                "type": "email_search",
+                "data": {
+                    "query": query,
+                    "results": results,
+                    "source": "gmail"
+                },
+                "message": message
+            }
+            
+        except Exception as e:
+            logger.error(f"Search email handler failed: {e}")
+            return {
+                "type": "email_search",
+                "data": {"error": str(e)},
+                "message": "I'm having trouble searching your emails right now."
+            }
+
+    async def _handle_remember_this(self, transcript: str, user_id: str = "default") -> Dict[str, Any]:
+        """
+        Handle requests to remember facts/preferences.
+        
+        Args:
+            transcript: User's request (e.g., "remember that my wife's birthday is March 15")
+            user_id: User identifier for data isolation
+            
+        Returns:
+            Confirmation of stored memory
+        """
+        print(f">>> REMEMBER_THIS handler called for user {user_id}")
+        logger.info(f"Handler: REMEMBER_THIS for user {user_id}")
+        
+        try:
+            memory_service = get_memory_service()
+            print(f">>> Memory service obtained: {memory_service.memory is not None}")
+            
+            # Extract what to remember using Gemini
+            prompt = f"""Extract the fact or information the user wants to remember.
+Return ONLY the fact as a clear, concise statement.
+
+Examples:
+"Remember that my wife's birthday is March 15" → "Wife's birthday is March 15"
+"Don't forget I'm allergic to peanuts" → "User is allergic to peanuts"
+"Remember my mom's name is Linda" → "Mom's name is Linda"
+"Keep in mind I prefer morning meetings" → "Prefers morning meetings"
+
+User request: "{transcript}"
+
+Fact to remember:"""
+
+            response = self.gemini_service.model.generate_content(
+                prompt,
+                generation_config={"temperature": 0.0, "max_output_tokens": 100}
+            )
+            
+            fact = response.text.strip().strip('"\'')
+            
+            if not fact:
+                return {
+                    "type": "memory",
+                    "data": {"error": "could not extract"},
+                    "message": "I couldn't understand what you'd like me to remember. Could you rephrase that?"
+                }
+            
+            # Store the memory
+            result = memory_service.add_memory(user_id, fact, metadata={"source": "explicit"})
+            
+            if result.get("success"):
+                logger.info(f"✓ Stored memory for {user_id}: {fact}")
+                return {
+                    "type": "memory",
+                    "data": {"action": "stored", "memory": fact},
+                    "message": f"Got it! I'll remember that: {fact}"
+                }
+            else:
+                return {
+                    "type": "memory",
+                    "data": {"error": result.get("error")},
+                    "message": "I had trouble storing that memory. Let me try again."
+                }
+                
+        except Exception as e:
+            logger.error(f"Remember handler failed: {e}")
+            return {
+                "type": "memory",
+                "data": {"error": str(e)},
+                "message": "I'm having trouble with my memory right now."
+            }
+
+    async def _handle_recall_memory(self, transcript: str, user_id: str = "default") -> Dict[str, Any]:
+        """
+        Handle requests to recall stored memories.
+        
+        Args:
+            transcript: User's request (e.g., "what do you know about my family?")
+            user_id: User identifier for data isolation
+            
+        Returns:
+            List of relevant memories
+        """
+        print(f">>> RECALL_MEMORY handler called for user {user_id}")
+        logger.info(f"Handler: RECALL_MEMORY for user {user_id}")
+        
+        try:
+            memory_service = get_memory_service()
+            
+            # Check if asking for everything or specific topic
+            is_general = any(phrase in transcript.lower() for phrase in [
+                "what do you know about me",
+                "what do you remember",
+                "everything you know",
+                "all my info",
+                "what have i told you"
+            ])
+            
+            if is_general:
+                # Get all memories
+                memories = memory_service.get_all_memories(user_id)
+                print(f">>> Got ALL memories: {memories}")
+            else:
+                # Search for relevant memories
+                memories = memory_service.search_memories(user_id, transcript, limit=10)
+                print(f">>> Searched memories for '{transcript}': {memories}")
+            
+            if not memories:
+                return {
+                    "type": "memory",
+                    "data": {"action": "recall", "memories": []},
+                    "message": "I don't have any memories stored for you yet. Tell me something to remember!"
+                }
+            
+            # Format memories - handle both dict and string formats
+            memory_list = []
+            for mem in memories:
+                if isinstance(mem, str):
+                    # Mem0 returned raw strings
+                    memory_text = mem
+                elif isinstance(mem, dict):
+                    # Mem0 returned dicts
+                    memory_text = mem.get("memory", mem.get("text", str(mem)))
+                else:
+                    memory_text = str(mem)
+                
+                if memory_text:
+                    memory_list.append(memory_text)
+            
+            if not memory_list:
+                return {
+                    "type": "memory",
+                    "data": {"action": "recall", "memories": []},
+                    "message": "I don't have any relevant memories about that."
+                }
+            
+            # Build response
+            if is_general:
+                message = f"Here's what I remember about you:\n"
+            else:
+                message = f"Here's what I remember about that:\n"
+            
+            for i, mem in enumerate(memory_list[:10], 1):
+                message += f"\n{i}. {mem}"
+            
+            if len(memory_list) > 10:
+                message += f"\n\n...and {len(memory_list) - 10} more things."
+            
+            return {
+                "type": "memory",
+                "data": {"action": "recall", "memories": memory_list, "count": len(memory_list)},
+                "message": message
+            }
+            
+        except Exception as e:
+            logger.error(f"Recall memory handler failed: {e}")
+            return {
+                "type": "memory",
+                "data": {"error": str(e)},
+                "message": "I'm having trouble accessing my memory right now."
+            }
+
+    async def _handle_forget_this(self, transcript: str, user_id: str = "default") -> Dict[str, Any]:
+        """
+        Handle requests to delete specific memories.
+        
+        Args:
+            transcript: User's request (e.g., "forget what I told you about my job")
+            user_id: User identifier for data isolation
+            
+        Returns:
+            Confirmation of deleted memory
+        """
+        logger.info(f"Handler: FORGET_THIS for user {user_id}")
+        
+        try:
+            memory_service = get_memory_service()
+            
+            # Check if user wants to forget everything
+            forget_all = any(phrase in transcript.lower() for phrase in [
+                "forget everything",
+                "clear all memories",
+                "delete all",
+                "forget all"
+            ])
+            
+            if forget_all:
+                success = memory_service.delete_all_memories(user_id)
+                if success:
+                    return {
+                        "type": "memory",
+                        "data": {"action": "deleted_all"},
+                        "message": "I've forgotten everything about you. We're starting fresh!"
+                    }
+                else:
+                    return {
+                        "type": "memory",
+                        "data": {"error": "delete_failed"},
+                        "message": "I had trouble clearing my memories."
+                    }
+            
+            # Find matching memories to delete
+            memories = memory_service.search_memories(user_id, transcript, limit=5)
+            
+            if not memories:
+                return {
+                    "type": "memory",
+                    "data": {"action": "not_found"},
+                    "message": "I couldn't find any memories matching that. What would you like me to forget?"
+                }
+            
+            # Delete the top matching memory
+            top_memory = memories[0]
+            
+            # Handle both dict and string formats
+            if isinstance(top_memory, str):
+                memory_id = None  # Can't delete by ID if just a string
+                memory_text = top_memory
+            elif isinstance(top_memory, dict):
+                memory_id = top_memory.get("id")
+                memory_text = top_memory.get("memory", top_memory.get("text", str(top_memory)))
+            else:
+                memory_id = None
+                memory_text = str(top_memory)
+            
+            if memory_id:
+                success = memory_service.delete_memory(memory_id)
+                if success:
+                    return {
+                        "type": "memory",
+                        "data": {"action": "deleted", "memory": memory_text},
+                        "message": f"Done! I've forgotten that: {memory_text}"
+                    }
+            
+            return {
+                "type": "memory",
+                "data": {"error": "delete_failed"},
+                "message": f"I found '{memory_text}' but couldn't delete it. The memory format may not support deletion."
+            }
+            
+        except Exception as e:
+            logger.error(f"Forget handler failed: {e}")
+            return {
+                "type": "memory",
+                "data": {"error": str(e)},
+                "message": "I'm having trouble with my memory right now."
+            }
 
     async def _handle_general_chat(self, transcript: str, profile: Dict[str, Any] = None, history: list = None) -> Dict[str, Any]:
         """

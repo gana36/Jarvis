@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { ArrowLeft, Save, Calendar, ExternalLink, CheckCircle } from 'lucide-react';
+import { ArrowLeft, Save, Calendar, ExternalLink, CheckCircle, Mail } from 'lucide-react';
 import { profileAPI, calendarAPI } from '@/services/api';
+import { useAuth } from '@/contexts/AuthContext';
 import type { Profile, ProfileUpdate, Voice } from '@/types/api';
 
 interface ProfileViewProps {
@@ -8,17 +9,20 @@ interface ProfileViewProps {
 }
 
 export function ProfileView({ onBack }: ProfileViewProps) {
+  const { currentUser } = useAuth();
   const [, setProfile] = useState<Profile | null>(null);
   const [voices, setVoices] = useState<Voice[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [formData, setFormData] = useState<ProfileUpdate>({});
   const [calendarStatus, setCalendarStatus] = useState<{ authorized: boolean; calendar_connected: boolean } | null>(null);
+  const [gmailStatus, setGmailStatus] = useState<{ authorized: boolean; gmail_connected: boolean } | null>(null);
 
   useEffect(() => {
     loadProfile();
     loadVoices();
     loadCalendarStatus();
+    loadGmailStatus();
   }, []);
 
   const loadProfile = async () => {
@@ -61,6 +65,19 @@ export function ProfileView({ onBack }: ProfileViewProps) {
     }
   };
 
+  const loadGmailStatus = async () => {
+    try {
+      const userId = currentUser?.uid || 'default';
+      const response = await fetch(`http://localhost:8000/auth/gmail/status?user_id=${userId}`);
+      if (response.ok) {
+        const status = await response.json();
+        setGmailStatus(status);
+      }
+    } catch (err) {
+      console.error('Failed to load Gmail status:', err);
+    }
+  };
+
   const handleConnectCalendar = async () => {
     try {
       const url = await calendarAPI.getConnectUrl();
@@ -80,6 +97,33 @@ export function ProfileView({ onBack }: ProfileViewProps) {
     } catch (err) {
       console.error('Failed to get calendar connect URL:', err);
     }
+  };
+
+  const handleConnectGmail = () => {
+    // Open Gmail OAuth in popup
+    const userId = currentUser?.uid || 'default';
+    const url = `http://localhost:8000/auth/google/gmail?user_id=${userId}`;
+    window.open(url, '_blank', 'width=600,height=700');
+
+    // Poll for status update
+    const interval = setInterval(async () => {
+      try {
+        const uid = currentUser?.uid || 'default';
+        const response = await fetch(`http://localhost:8000/auth/gmail/status?user_id=${uid}`);
+        if (response.ok) {
+          const status = await response.json();
+          setGmailStatus(status);
+          if (status.gmail_connected) {
+            clearInterval(interval);
+          }
+        }
+      } catch (err) {
+        console.error('Gmail polling error:', err);
+      }
+    }, 3000);
+
+    // Stop polling after 2 minutes
+    setTimeout(() => clearInterval(interval), 120000);
   };
 
   const handleSave = async () => {
@@ -287,6 +331,39 @@ export function ProfileView({ onBack }: ProfileViewProps) {
             >
               <Calendar size={20} />
               {calendarStatus?.calendar_connected ? 'Reconnect Google Calendar' : 'Connect Google Calendar'}
+              <ExternalLink size={16} className="opacity-50" />
+            </button>
+          </div>
+
+          {/* Gmail Integration */}
+          <div className="glass-panel rounded-lg p-6 mb-12">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-medium text-foreground">
+                Gmail Integration
+              </h2>
+              {gmailStatus?.gmail_connected ? (
+                <div className="flex items-center gap-2 text-green-400 text-sm">
+                  <CheckCircle size={16} />
+                  Connected
+                </div>
+              ) : (
+                <div className="text-amber-400 text-sm">Not Connected</div>
+              )}
+            </div>
+
+            <p className="text-sm text-muted-foreground mb-6">
+              Connect your Gmail so Jarvis can check your emails and provide summaries.
+            </p>
+
+            <button
+              onClick={handleConnectGmail}
+              className={`flex items-center justify-center gap-3 w-full py-3 rounded-lg border transition-all ${gmailStatus?.gmail_connected
+                ? 'bg-muted/20 border-border/50 text-foreground hover:bg-muted/30'
+                : 'bg-red-500/10 border-red-500/30 text-red-400 hover:bg-red-500/20'
+                }`}
+            >
+              <Mail size={20} />
+              {gmailStatus?.gmail_connected ? 'Reconnect Gmail' : 'Connect Gmail'}
               <ExternalLink size={16} className="opacity-50" />
             </button>
           </div>
