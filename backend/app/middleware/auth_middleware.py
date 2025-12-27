@@ -37,11 +37,35 @@ class AuthMiddleware:
             # Initialize Firebase Admin if not already done
             if not firebase_admin._apps:
                 cred_path = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
+                
                 if cred_path:
                     cred = credentials.Certificate(cred_path)
                     firebase_admin.initialize_app(cred)
                 else:
-                    firebase_admin.initialize_app()
+                    # Try to use GOOGLE_CREDENTIALS_JSON from environment
+                    from app.config import get_settings
+                    import json
+                    import tempfile
+                    
+                    settings = get_settings()
+                    if settings.google_credentials_json:
+                        # Parse JSON and write to temp file for Firebase
+                        creds_dict = json.loads(settings.google_credentials_json)
+                        
+                        # Set project ID env var (Firebase needs this for token verification)
+                        if 'project_id' in creds_dict and not os.getenv('GOOGLE_CLOUD_PROJECT'):
+                            os.environ['GOOGLE_CLOUD_PROJECT'] = creds_dict['project_id']
+                            logger.info(f"Set GOOGLE_CLOUD_PROJECT to {creds_dict['project_id']}")
+                        
+                        temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
+                        json.dump(creds_dict, temp_file)
+                        temp_file.close()
+                        
+                        cred = credentials.Certificate(temp_file.name)
+                        firebase_admin.initialize_app(cred)
+                        logger.info("Firebase initialized with GOOGLE_CREDENTIALS_JSON")
+                    else:
+                        firebase_admin.initialize_app()
             
             # Verify the token
             decoded_token = auth.verify_id_token(token)

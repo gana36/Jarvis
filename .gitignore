@@ -53,9 +53,15 @@ dist-ssr/
 # Logs
 logs/
 *.log
+backend/certs.json
+calendar_token.json
+fitbit_token.json
 
 # Build outputs
 *.pyc
 *.pyo
 *.pyd
 .Python
+
+jarvis
+backend/app/certs.json
