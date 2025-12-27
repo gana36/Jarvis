@@ -220,7 +220,7 @@ Current date: {current_date} ({day_of_week})
 
 Input: "{user_message}"
 
-Intents: GET_WEATHER, ADD_TASK, COMPLETE_TASK, UPDATE_TASK, DELETE_TASK, LIST_TASKS, GET_TASK_REMINDERS, DAILY_SUMMARY, CREATE_CALENDAR_EVENT, UPDATE_CALENDAR_EVENT, DELETE_CALENDAR_EVENT, CHECK_EMAIL, SEARCH_EMAIL, ANALYZE_EMAIL, REMEMBER_THIS, RECALL_MEMORY, FORGET_THIS, LEARN, GET_NEWS, GENERAL_CHAT
+Intents: GET_WEATHER, ADD_TASK, COMPLETE_TASK, UPDATE_TASK, DELETE_TASK, LIST_TASKS, GET_TASK_REMINDERS, DAILY_SUMMARY, CREATE_CALENDAR_EVENT, UPDATE_CALENDAR_EVENT, DELETE_CALENDAR_EVENT, CHECK_EMAIL, SEARCH_EMAIL, ANALYZE_EMAIL, SEARCH_RESTAURANTS, REMEMBER_THIS, RECALL_MEMORY, FORGET_THIS, LEARN, GET_NEWS, GENERAL_CHAT
 
 For calendar intents, extract:
 - title: event name (clean, no articles)
@@ -301,6 +301,7 @@ Intents:
 - CHECK_EMAIL: list emails, show inbox, "my last 5 emails", "any new emails?", "show me my emails", unread count
 - SEARCH_EMAIL: find emails with specific criteria like from/subject/date, "emails from Bob", "find emails about invoices"
 - ANALYZE_EMAIL: analyze/summarize email content, "do any emails have deadlines?", "summarize my emails", "what are my emails about?", "any urgent emails?"
+- SEARCH_RESTAURANTS: restaurant/food recommendations, "find restaurants near me", "best Italian place", "where to eat", "recommend a sushi place", "coffee shops nearby"
 - REMEMBER_THIS: user wants you to remember something, "remember that", "don't forget", store fact
 - RECALL_MEMORY: user asks what you remember, "what do you know about me", "what did I tell you"
 - FORGET_THIS: user wants to delete a memory, "forget that", "delete memory"
@@ -322,6 +323,10 @@ Examples:
 - "do any of my emails have deadlines?" → ANALYZE_EMAIL
 - "what are my emails about?" → ANALYZE_EMAIL
 - "any urgent emails I should read?" → ANALYZE_EMAIL
+- "find restaurants near me" → SEARCH_RESTAURANTS
+- "best Italian restaurant" → SEARCH_RESTAURANTS
+- "recommend a sushi place nearby" → SEARCH_RESTAURANTS
+- "where can I get coffee?" → SEARCH_RESTAURANTS
 - "remember that my wife's birthday is March 15" → REMEMBER_THIS
 - "what do you know about my family?" → RECALL_MEMORY
 - "forget what I told you about my job" → FORGET_THIS

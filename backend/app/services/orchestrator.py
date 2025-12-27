@@ -9,6 +9,7 @@ from app.services.gemini import get_gemini_service
 from app.services.fitbit_tool import get_fitbit_tool
 from app.services.gmail_tool import get_gmail_tool
 from app.services.memory_service import get_memory_service
+from app.services.yelp_tool import get_yelp_tool
 
 logger = logging.getLogger(__name__)
 
@@ -290,6 +291,7 @@ class OrchestratorService:
             "CHECK_EMAIL": lambda t: self._handle_check_email(t, user_id),
             "SEARCH_EMAIL": lambda t: self._handle_search_email(t, user_id),
             "ANALYZE_EMAIL": lambda t: self._handle_analyze_email(t, user_id),
+            "SEARCH_RESTAURANTS": lambda t: self._handle_search_restaurants(t, user_id, profile),
             "REMEMBER_THIS": lambda t: self._handle_remember_this(t, user_id),
             "RECALL_MEMORY": lambda t: self._handle_recall_memory(t, user_id),
             "FORGET_THIS": lambda t: self._handle_forget_this(t, user_id),
@@ -2004,6 +2006,139 @@ Keep response under 3 sentences unless they asked for a detailed summary."""
                 "type": "email_analysis",
                 "data": {"error": str(e)},
                 "message": "I'm having trouble analyzing your emails right now."
+            }
+
+    async def _handle_search_restaurants(
+        self, 
+        transcript: str, 
+        user_id: str = "default",
+        profile: Dict[str, Any] = None
+    ) -> Dict[str, Any]:
+        """
+        Handle restaurant search requests using Yelp AI API.
+        
+        Args:
+            transcript: User's request (e.g., "find Italian restaurants near me")
+            user_id: User identifier
+            profile: User profile with location info
+            
+        Returns:
+            Search results with restaurants and AI-generated summary
+        """
+        logger.info(f"Handler: SEARCH_RESTAURANTS for user {user_id}")
+        
+        try:
+            yelp_tool = get_yelp_tool()
+            memory_service = get_memory_service()
+            
+            # Check if Yelp API is configured
+            if not yelp_tool.is_available:
+                logger.warning("Yelp API not configured")
+                return {
+                    "type": "restaurants",
+                    "data": {"error": "not_configured"},
+                    "message": "Restaurant search isn't configured yet. Please add YELP_API_KEY to your environment."
+                }
+            
+            # Extract location from profile if available
+            latitude = None
+            longitude = None
+            location_context = ""
+            
+            if profile:
+                location = profile.get("location", "")
+                if location:
+                    location_context = location
+                # Try to get coordinates from profile (if stored)
+                if profile.get("latitude") and profile.get("longitude"):
+                    latitude = profile.get("latitude")
+                    longitude = profile.get("longitude")
+            
+            # Check memories for location and food preferences
+            food_preference = ""
+            if user_id:
+                try:
+                    memories = memory_service.get_all_memories(user_id)
+                    for mem in memories:
+                        if isinstance(mem, dict):
+                            text = mem.get("memory", mem.get("text", "")).lower()
+                        else:
+                            text = str(mem).lower()
+                        # Look for location keywords
+                        if any(kw in text for kw in ["live in", "lives in", "living in", "i'm from", "located in", "i'm in", "i am in", "i stay in"]):
+                            location_context = text
+                            logger.info(f"📍 Found location in memory: {text}")
+                        # Look for food preferences
+                        if any(kw in text for kw in ["vegetarian", "vegan", "gluten-free", "halal", "kosher", "allergic", "don't eat", "prefer"]):
+                            food_preference = text
+                            logger.info(f"🥗 Found food preference in memory: {text}")
+                except Exception as e:
+                    logger.warning(f"Could not get memories: {e}")
+            
+            # Enhance query with location and preferences
+            query = transcript
+            needs_location = any(kw in transcript.lower() for kw in ["near me", "nearest", "nearby", "around me", "close to me"])
+            if location_context and needs_location:
+                # Append location context to query
+                query = f"{transcript} in {location_context}"
+                logger.info(f"🍽️ Enhanced query with location: {query}")
+            
+            if food_preference and not any(kw in transcript.lower() for kw in ["vegetarian", "vegan", "gluten", "halal", "kosher"]):
+                # Add food preference if not already specified
+                query = f"{query} ({food_preference})"
+                logger.info(f"🍽️ Enhanced query with preference: {query}")
+            
+            # Search using Yelp AI
+            response = await yelp_tool.search_restaurants(
+                query=query,
+                latitude=latitude,
+                longitude=longitude
+            )
+            
+            # Format businesses for response
+            businesses_data = []
+            for biz in response.businesses[:5]:  # Limit to 5 results
+                businesses_data.append({
+                    "id": biz.id,
+                    "name": biz.name,
+                    "rating": biz.rating,
+                    "review_count": biz.review_count,
+                    "price": biz.price,
+                    "distance": biz.distance,
+                    "image_url": biz.image_url,
+                    "tags": biz.tags,
+                    "url": biz.url,
+                    "phone": biz.phone
+                })
+            
+            # Build user-friendly message
+            if response.response_text:
+                message = response.response_text
+            elif businesses_data:
+                message = f"I found {len(businesses_data)} restaurants for you:\n"
+                for i, biz in enumerate(businesses_data[:3], 1):
+                    rating = f"⭐ {biz['rating']}" if biz.get('rating') else ""
+                    price = biz.get('price', '')
+                    message += f"\n{i}. {biz['name']} {rating} {price}"
+            else:
+                message = "I couldn't find any restaurants matching your request. Try being more specific about the cuisine or location."
+            
+            return {
+                "type": "restaurants",
+                "data": {
+                    "businesses": businesses_data,
+                    "count": len(businesses_data),
+                    "chat_id": response.chat_id
+                },
+                "message": message
+            }
+            
+        except Exception as e:
+            logger.error(f"Search restaurants handler failed: {e}")
+            return {
+                "type": "restaurants",
+                "data": {"error": str(e)},
+                "message": "I'm having trouble searching for restaurants right now. Please try again."
             }
 
     async def _handle_remember_this(self, transcript: str, user_id: str = "default") -> Dict[str, Any]:

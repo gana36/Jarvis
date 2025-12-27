@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     # Qdrant Cloud for long-term memory vector storage
     qdrant_url: str | None = None  # e.g., https://xxx.cloud.qdrant.io:6333
     qdrant_api_key: str | None = None
+    
+    # Yelp AI API for restaurant search
+    yelp_api_key: str | None = None
+    yelp_api_base_url: str = "https://api.yelp.com"
 
     class Config:
         env_file = ".env"
