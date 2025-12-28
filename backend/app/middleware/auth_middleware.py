@@ -72,10 +72,19 @@ class AuthMiddleware:
             return decoded_token
             
         except Exception as e:
-            logger.error(f"Token verification failed: {e}")
+            error_msg = str(e)
+            logger.error(f"Token verification failed: {error_msg}")
+            
+            # Extract cleaner message if it's a known Firebase error
+            detail = f"Invalid authentication token: {error_msg}"
+            if "Token is expired" in error_msg:
+                detail = "Your session has expired. Please log out and log back in."
+            elif "Firebase ID token has incorrect \"aud\" (audience) claim" in error_msg:
+                detail = "Token project mismatch. The frontend and backend are using different Firebase projects."
+            
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=f"Invalid authentication token: {str(e)}"
+                detail=detail
             )
 
 

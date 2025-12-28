@@ -188,12 +188,13 @@ Jarvis:"""
             logger.error(f"Gemini streaming error: {e}")
             yield "I'm having trouble thinking right now."
 
-    async def classify_and_extract(self, user_message: str) -> dict:
+    async def classify_and_extract(self, user_message: str, history: list = None) -> dict:
         """
         Classify intent AND extract relevant details in a single LLM call.
         
         Args:
             user_message: User's message
+            history: Optional conversation history for context
             
         Returns:
             Dict with 'intent', 'confidence', and 'details' (null for simple intents)
@@ -212,8 +213,19 @@ Jarvis:"""
             current_date = now.strftime("%Y-%m-%d")
             day_of_week = now.strftime("%A")
             
+            # Build conversation history if available
+            history_context = ""
+            if history and len(history) > 0:
+                history_lines = []
+                for msg in history[-4:]:  # Last 4 messages for classification context
+                    role = "User" if msg.get("role") == "user" else "Jarvis"
+                    content = msg.get("parts", "")
+                    history_lines.append(f"{role}: {content}")
+                history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"
+
             # Unified prompt for classification + extraction
-            prompt = f"""Classify intent and extract details if applicable. Return JSON only.
+            prompt = f"""{history_context}Classify intent and extract details if applicable. Return JSON only.
+Use the conversation history above to resolve pronouns like "that", "those", or "the one" if the current input is a follow-up.
 
 Current time: {current_time}
 Current date: {current_date} ({day_of_week})
@@ -277,19 +289,31 @@ Examples:
             # Fallback to generic chat
             return {"intent": "GENERAL_CHAT", "confidence": 0.5, "details": null}
 
-    async def classify_intent(self, user_message: str) -> dict:
+    async def classify_intent(self, user_message: str, history: list = None) -> dict:
         """
         Classify user intent using minimal prompt for speed.
         
         Args:
             user_message: User's transcribed message
+            history: Optional conversation history for context
             
         Returns:
             Dict with 'intent' and 'confidence' fields
         """
         try:
+            # Build conversation history if available
+            history_context = ""
+            if history and len(history) > 0:
+                history_lines = []
+                for msg in history[-4:]:  # Last 4 messages for classification context
+                    role = "User" if msg.get("role") == "user" else "Jarvis"
+                    content = msg.get("parts", "")
+                    history_lines.append(f"{role}: {content}")
+                history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"
+
             # Ultra-minimal prompt for speed
-            prompt = f"""Classify intent. Return JSON only.
+            prompt = f"""{history_context}Classify intent. Return JSON only.
+If the input is a follow-up (e.g., "more casual", "closest one", "how about that?"), use the history to determine the intent.
 
 Input: "{user_message}"
 
@@ -363,12 +387,13 @@ Output format:
             # Fallback to generic chat
             return {"intent": "GENERAL_CHAT", "confidence": 0.5}
 
-    async def extract_calendar_event(self, user_message: str) -> dict:
+    async def extract_calendar_event(self, user_message: str, history: list = None) -> dict:
         """
         Extract calendar event details from natural language.
         
         Args:
             user_message: User's request (e.g., "create movie event at 6pm today")
+            history: Optional conversation history for context
             
         Returns:
             Dict with 'title', 'hour', 'minute', 'am_pm' fields
@@ -382,8 +407,19 @@ Output format:
             current_time = now.strftime("%I:%M %p")
             current_date = now.strftime("%Y-%m-%d")
             
+            # Build conversation history if available
+            history_context = ""
+            if history and len(history) > 0:
+                history_lines = []
+                for msg in history[-4:]:
+                    role = "User" if msg.get("role") == "user" else "Jarvis"
+                    content = msg.get("parts", "")
+                    history_lines.append(f"{role}: {content}")
+                history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"
+
             # Minimal prompt for fast extraction
-            prompt = f"""Extract calendar event details. Return JSON only.
+            prompt = f"""{history_context}Extract calendar event details. Return JSON only.
+Use the history above to resolve pronouns or dates (e.g., "at that same time tomorrow").
 
 Current time: {current_time}
 Current date: {current_date}
@@ -426,12 +462,13 @@ Output format:
             # Fallback to defaults
             return {"title": "New Event", "hour": datetime.now().hour + 1, "minute": 0}
 
-    async def extract_calendar_update(self, user_message: str) -> dict:
+    async def extract_calendar_update(self, user_message: str, history: list = None) -> dict:
         """
         Extract calendar update details from natural language.
         
         Args:
             user_message: User's request (e.g., "change movie to 7pm")
+            history: Optional conversation history for context
             
         Returns:
             Dict with 'event_name', 'new_title', 'new_hour', 'new_minute'
@@ -442,8 +479,19 @@ Output format:
             now = datetime.now()
             current_time = now.strftime("%I:%M %p")
             
+            # Build conversation history if available
+            history_context = ""
+            if history and len(history) > 0:
+                history_lines = []
+                for msg in history[-4:]:
+                    role = "User" if msg.get("role") == "user" else "Jarvis"
+                    content = msg.get("parts", "")
+                    history_lines.append(f"{role}: {content}")
+                history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"
+
             # Minimal prompt for fast extraction
-            prompt = f"""Extract calendar update details. Return JSON only.
+            prompt = f"""{history_context}Extract calendar update details. Return JSON only.
+Use the history to identify which event the user is referring to if using pronouns.
 
 Current time: {current_time}
 

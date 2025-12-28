@@ -42,7 +42,8 @@ class LearningTool:
     async def answer_question(
         self, 
         question: str, 
-        learning_level: Optional[str] = None
+        learning_level: Optional[str] = None,
+        history: list = None
     ) -> Dict[str, Any]:
         """
         Answer educational question using web search + Gemini.
@@ -70,18 +71,40 @@ class LearningTool:
             }
         
         try:
+            # Resolve question if short and history present (pronoun resolution)
+            resolved_question = question
+            if history and len(question.split()) <= 10:
+                history_context = ""
+                history_lines = []
+                for msg in history[-4:]:
+                    role = "User" if msg.get("role") == "user" else "Jarvis"
+                    content = msg.get("parts", "")
+                    history_lines.append(f"{role}: {content}")
+                history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"
+                
+                resolution_prompt = f"""{history_context}Resolve the subject of this question.
+Use history to resolve pronouns like "him", "her", "it", "that".
+Question: "{question}"
+Resolved Question (short and factual):"""
+                try:
+                    resp = self.gemini.generate_content(resolution_prompt)
+                    resolved_question = resp.text.strip().strip('"')
+                    logger.info(f"📚 Resolved learning query: '{question}' -> '{resolved_question}'")
+                except Exception as ex:
+                    logger.warning(f"Failed to resolve question: {ex}")
+
             # Search the web if You.com API key available
             search_results = ""
             citations = []
             
             if self.youcom_api_key:
-                search_data = await self._search_web(question)
+                search_data = await self._search_web(resolved_question)
                 if search_data:
                     search_results = search_data['context']
                     citations = search_data['citations']
             
             # Generate answer using Gemini with search context
-            answer = await self._generate_answer(question, search_results, learning_level)
+            answer = await self._generate_answer(resolved_question, search_results, learning_level)
             
             result = {
                 "answer": answer,

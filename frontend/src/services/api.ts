@@ -31,7 +31,6 @@ export const voiceAPI = {
       formData.append('voice_id', voiceId);
     }
 
-    // Get auth token
     const token = await getAuthToken();
     const headers: HeadersInit = {};
     if (token) {
@@ -45,7 +44,8 @@ export const voiceAPI = {
     });
 
     if (!response.ok) {
-      throw new Error(`Voice API error: ${response.statusText}`);
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`Voice API error: ${errorData.detail || response.statusText}`);
     }
 
     return response.json();
@@ -70,7 +70,8 @@ export const chatAPI = {
     });
 
     if (!response.ok) {
-      throw new Error(`Chat API error: ${response.statusText}`);
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`Chat API error: ${errorData.detail || response.statusText}`);
     }
 
     return response.json();
@@ -93,7 +94,8 @@ export const tasksAPI = {
 
     const response = await fetch(url.toString(), { headers });
     if (!response.ok) {
-      throw new Error(`Tasks API error: ${response.statusText}`);
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`Tasks API error: ${errorData.detail || response.statusText}`);
     }
 
     return response.json();
@@ -108,7 +110,8 @@ export const tasksAPI = {
 
     const response = await fetch(`${API_BASE_URL}/tasks/${taskId}`, { headers });
     if (!response.ok) {
-      throw new Error(`Tasks API error: ${response.statusText}`);
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`Tasks API error: ${errorData.detail || response.statusText}`);
     }
 
     return response.json();
@@ -130,7 +133,8 @@ export const tasksAPI = {
     });
 
     if (!response.ok) {
-      throw new Error(`Tasks API error: ${response.statusText}`);
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`Tasks API error: ${errorData.detail || response.statusText}`);
     }
 
     return response.json();
@@ -152,7 +156,8 @@ export const tasksAPI = {
     });
 
     if (!response.ok) {
-      throw new Error(`Tasks API error: ${response.statusText}`);
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`Tasks API error: ${errorData.detail || response.statusText}`);
     }
 
     return response.json();
@@ -171,7 +176,8 @@ export const tasksAPI = {
     });
 
     if (!response.ok) {
-      throw new Error(`Tasks API error: ${response.statusText}`);
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`Tasks API error: ${errorData.detail || response.statusText}`);
     }
   },
 };
@@ -190,7 +196,8 @@ export const profileAPI = {
     });
 
     if (!response.ok) {
-      throw new Error(`Profile API error: ${response.statusText}`);
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`Profile API error: ${errorData.detail || response.statusText}`);
     }
 
     return response.json();
@@ -212,7 +219,8 @@ export const profileAPI = {
     });
 
     if (!response.ok) {
-      throw new Error(`Profile API error: ${response.statusText}`);
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`Profile API error: ${errorData.detail || response.statusText}`);
     }
 
     return response.json();
@@ -241,7 +249,8 @@ export const calendarAPI = {
     });
 
     if (!response.ok) {
-      throw new Error(`Calendar API error: ${response.statusText}`);
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`Calendar API error: ${errorData.detail || response.statusText}`);
     }
 
     return response.json();

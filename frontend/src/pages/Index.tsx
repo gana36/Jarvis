@@ -224,6 +224,8 @@ export default function Index() {
           cardType = 'memory';
         } else if (intentLower.includes('news')) {
           cardType = 'news';
+        } else if (intentLower.includes('restaurant')) {
+          cardType = 'restaurant';
         }
 
         const mainCard: Card = {
@@ -355,6 +357,7 @@ export default function Index() {
         else if (intentLower.includes('calendar')) cardType = 'calendar';
         else if (intentLower.includes('learn')) cardType = 'memory';
         else if (intentLower.includes('news')) cardType = 'news';
+        else if (intentLower.includes('restaurant')) cardType = 'restaurant';
 
         setCards([{
           id: Date.now().toString(),
