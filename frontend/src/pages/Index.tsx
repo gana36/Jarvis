@@ -499,7 +499,7 @@ export default function Index() {
       <header className="absolute top-0 left-0 right-0 z-10 p-6 flex items-center justify-between">
         <div className="flex items-center gap-4">
           <h1 className="text-lg font-medium tracking-wide text-foreground/90 text-mono">
-            JARVIS
+            MANAS
           </h1>
           <StatusIndicator state={orbState} />
         </div>

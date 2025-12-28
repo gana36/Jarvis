@@ -112,7 +112,7 @@ class NewsTool:
         """Create a professional conversational intro for the news briefing."""
         headlines = "\n".join([f"- {a['title']}" for a in articles])
         
-        prompt = f"""You are Jarvis, a professional AI assistant. 
+        prompt = f"""You are Manas, a professional AI assistant. 
 Briefly summarize the state of news regarding '{query}' based on these headlines.
 Keep it to 1-2 professional sentences that act as an intro to the list I'm showing.
 Do not use emojis. Be direct and sophisticated.

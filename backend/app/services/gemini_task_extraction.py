@@ -13,7 +13,7 @@ async def extract_task_completion(model, user_message: str, history: list = None
         if history and len(history) > 0:
             history_lines = []
             for msg in history[-4:]:
-                role = "User" if msg.get("role") == "user" else "Jarvis"
+                role = "User" if msg.get("role") == "user" else "Manas"
                 content = msg.get("parts", "")
                 history_lines.append(f"{role}: {content}")
             history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"
@@ -51,7 +51,7 @@ async def extract_task_update(model, user_message: str, history: list = None) ->
         if history and len(history) > 0:
             history_lines = []
             for msg in history[-4:]:
-                role = "User" if msg.get("role") == "user" else "Jarvis"
+                role = "User" if msg.get("role") == "user" else "Manas"
                 content = msg.get("parts", "")
                 history_lines.append(f"{role}: {content}")
             history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"
@@ -88,7 +88,7 @@ async def extract_task_deletion(model, user_message: str, history: list = None) 
         if history and len(history) > 0:
             history_lines = []
             for msg in history[-4:]:
-                role = "User" if msg.get("role") == "user" else "Jarvis"
+                role = "User" if msg.get("role") == "user" else "Manas"
                 content = msg.get("parts", "")
                 history_lines.append(f"{role}: {content}")
             history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"

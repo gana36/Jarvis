@@ -143,7 +143,7 @@ async def google_gmail_callback(code: str | None = None, state: str | None = Non
             content="""
             <html>
                 <head>
-                    <title>Link Established | Jarvis</title>
+                    <title>Link Established | Manas</title>
                     <style>
                         :root {
                             --primary: #22d3ee;
@@ -266,14 +266,14 @@ async def google_gmail_callback(code: str | None = None, state: str | None = Non
                     <div class="ambient-glow"></div>
                     <div class="container">
                         <div class="branding">
-                            JARVIS
+                            MANAS
                             <span>Neural Link</span>
                         </div>
                         <div class="icon-wrap">
                             <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"></path><rect width="20" height="16" x="2" y="5" rx="2"></rect></svg>
                         </div>
                         <h1>Gmail Connected</h1>
-                        <p>Your communication stream has been successfully integrated. Jarvis is now ready to assist with your mail.</p>
+                        <p>Your communication stream has been successfully integrated. Manas is now ready to assist with your mail.</p>
                         <button class="close-btn" onclick="window.close()">Secure and Close</button>
                         <div class="footer">Link Established v2.5.0</div>
                     </div>

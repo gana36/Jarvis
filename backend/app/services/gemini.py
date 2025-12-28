@@ -75,7 +75,7 @@ class GeminiService:
             if history and len(history) > 0:
                 history_lines = []
                 for msg in history[-6:]:  # Last 6 messages (3 exchanges)
-                    role = "User" if msg.get("role") == "user" else "Jarvis"
+                    role = "User" if msg.get("role") == "user" else "Manas"
                     content = msg.get("parts", "")
                     history_lines.append(f"{role}: {content}")
                 history_context = "\n".join(history_lines) + "\n\n"
@@ -86,13 +86,13 @@ class GeminiService:
                 memory_section = f"{memory_context}\n\n"
             
             # Construct prompt with personality, context, and memories
-            prompt = f"""You are Jarvis, a helpful and friendly personal AI assistant. You are concise, warm, and conversational. Respond naturally as if chatting with a friend. Keep responses brief (1-2 sentences).
+            prompt = f"""You are Manas, a helpful and friendly personal AI assistant. You are concise, warm, and conversational. Respond naturally as if chatting with a friend. Keep responses brief (1-2 sentences).
 
 IMPORTANT: When referencing the user's personal information below, use "your" (e.g., "your favorite color is blue"), never "my".
 
 {memory_section}Your capabilities: weather queries, task management (add/complete/update/delete tasks), calendar events (create/update/delete), daily summaries, task reminders, and general conversation.
 {profile_context}{history_context}User: {user_message}
-Jarvis:"""
+Manas:"""
 
             # Generate response with minimal configuration for speed
             response = self.model.generate_content(
@@ -153,18 +153,18 @@ Jarvis:"""
             if history and len(history) > 0:
                 history_lines = []
                 for msg in history[-6:]:  # Last 6 messages (3 exchanges)
-                    role = "User" if msg.get("role") == "user" else "Jarvis"
+                    role = "User" if msg.get("role") == "user" else "Manas"
                     content = msg.get("parts", "")
                     history_lines.append(f"{role}: {content}")
                 history_context = "\n".join(history_lines) + "\n\n"
             
             # Construct prompt with personality and context
-            prompt = f"""You are Jarvis, a helpful and friendly personal AI assistant. You are concise, warm, and conversational. Respond naturally as if chatting with a friend. Keep responses brief (1-2 sentences).
+            prompt = f"""You are Manas, a helpful and friendly personal AI assistant. You are concise, warm, and conversational. Respond naturally as if chatting with a friend. Keep responses brief (1-2 sentences).
 
 
 Your capabilities: weather queries, task management (add/complete/update/delete tasks), calendar events (create/update/delete), daily summaries, task reminders, and general conversation.
 {profile_context}{history_context}User: {user_message}
-Jarvis:"""
+Manas:"""
 
             # Generate response with streaming enabled
             response = self.model.generate_content(
@@ -218,7 +218,7 @@ Jarvis:"""
             if history and len(history) > 0:
                 history_lines = []
                 for msg in history[-4:]:  # Last 4 messages for classification context
-                    role = "User" if msg.get("role") == "user" else "Jarvis"
+                    role = "User" if msg.get("role") == "user" else "Manas"
                     content = msg.get("parts", "")
                     history_lines.append(f"{role}: {content}")
                 history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"
@@ -306,7 +306,7 @@ Examples:
             if history and len(history) > 0:
                 history_lines = []
                 for msg in history[-4:]:  # Last 4 messages for classification context
-                    role = "User" if msg.get("role") == "user" else "Jarvis"
+                    role = "User" if msg.get("role") == "user" else "Manas"
                     content = msg.get("parts", "")
                     history_lines.append(f"{role}: {content}")
                 history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"
@@ -412,7 +412,7 @@ Output format:
             if history and len(history) > 0:
                 history_lines = []
                 for msg in history[-4:]:
-                    role = "User" if msg.get("role") == "user" else "Jarvis"
+                    role = "User" if msg.get("role") == "user" else "Manas"
                     content = msg.get("parts", "")
                     history_lines.append(f"{role}: {content}")
                 history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"
@@ -484,7 +484,7 @@ Output format:
             if history and len(history) > 0:
                 history_lines = []
                 for msg in history[-4:]:
-                    role = "User" if msg.get("role") == "user" else "Jarvis"
+                    role = "User" if msg.get("role") == "user" else "Manas"
                     content = msg.get("parts", "")
                     history_lines.append(f"{role}: {content}")
                 history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"

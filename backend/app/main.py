@@ -21,7 +21,7 @@ if settings.google_project_id and not os.getenv('GOOGLE_CLOUD_PROJECT'):
     print(f"Set GOOGLE_CLOUD_PROJECT to {settings.google_project_id}")
 
 app = FastAPI(
-    title="Mini Jarvis API",
+    title="Mini Manas API",
     description="Low-latency voice assistant backend",
     version="0.1.0",
 )
@@ -47,7 +47,7 @@ app.include_router(profile.router, prefix="/api", tags=["profile"])
 
 @app.get("/")
 async def root():
-    return {"message": "Mini Jarvis API - Backend placeholder"}
+    return {"message": "Mini Manas API - Backend placeholder"}
 
 
 @app.get("/health")

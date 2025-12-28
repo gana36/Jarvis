@@ -71,7 +71,7 @@ export function Login() {
                             transition={{ delay: 0.3 }}
                             className="text-3xl font-light tracking-[0.3em] text-white uppercase mb-1"
                         >
-                            Jarvis
+                            Manas
                         </motion.h1>
                         <span className="text-[9px] font-bold tracking-[0.5em] text-primary uppercase opacity-60">Neural Interface</span>
                     </div>

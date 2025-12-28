@@ -319,7 +319,7 @@ export function ProfileView({ onBack }: ProfileViewProps) {
             </div>
 
             <p className="text-sm text-muted-foreground mb-6">
-              Connect your Google Calendar so Jarvis can manage your schedule and provide daily summaries.
+              Connect your Google Calendar so Manas can manage your schedule and provide daily summaries.
             </p>
 
             <button
@@ -352,7 +352,7 @@ export function ProfileView({ onBack }: ProfileViewProps) {
             </div>
 
             <p className="text-sm text-muted-foreground mb-6">
-              Connect your Gmail so Jarvis can check your emails and provide summaries.
+              Connect your Gmail so Manas can check your emails and provide summaries.
             </p>
 
             <button

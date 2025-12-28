@@ -512,7 +512,7 @@ Natural:"""
             if history and len(history) > 0:
                 history_lines = []
                 for msg in history[-4:]:
-                    role = "User" if msg.get("role") == "user" else "Jarvis"
+                    role = "User" if msg.get("role") == "user" else "Manas"
                     content = msg.get("parts", "")
                     history_lines.append(f"{role}: {content}")
                 history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"
@@ -588,7 +588,7 @@ Location:"""
             if history and len(history) > 0:
                 history_lines = []
                 for msg in history[-4:]:
-                    role = "User" if msg.get("role") == "user" else "Jarvis"
+                    role = "User" if msg.get("role") == "user" else "Manas"
                     content = msg.get("parts", "")
                     history_lines.append(f"{role}: {content}")
                 history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"
@@ -1126,7 +1126,7 @@ Examples:
                 history_context = ""
                 history_lines = []
                 for msg in history[-4:]:
-                    role = "User" if msg.get("role") == "user" else "Jarvis"
+                    role = "User" if msg.get("role") == "user" else "Manas"
                     content = msg.get("parts", "")
                     history_lines.append(f"{role}: {content}")
                 history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"
@@ -1668,7 +1668,7 @@ Resolved Request (include the date mentioned in history):"""
             if history and len(history) > 0:
                 history_lines = []
                 for msg in history[-4:]:
-                    role = "User" if msg.get("role") == "user" else "Jarvis"
+                    role = "User" if msg.get("role") == "user" else "Manas"
                     content = msg.get("parts", "")
                     history_lines.append(f"{role}: {content}")
                 history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"
@@ -1745,7 +1745,7 @@ Topic:"""
             if history and len(history) > 0:
                 history_lines = []
                 for msg in history[-4:]:
-                    role = "User" if msg.get("role") == "user" else "Jarvis"
+                    role = "User" if msg.get("role") == "user" else "Manas"
                     content = msg.get("parts", "")
                     history_lines.append(f"{role}: {content}")
                 history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"
@@ -1890,7 +1890,7 @@ JSON:"""
             if history and len(history) > 0:
                 history_lines = []
                 for msg in history[-4:]:
-                    role = "User" if msg.get("role") == "user" else "Jarvis"
+                    role = "User" if msg.get("role") == "user" else "Manas"
                     content = msg.get("parts", "")
                     history_lines.append(f"{role}: {content}")
                 history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"
@@ -2045,12 +2045,12 @@ Gmail query:"""
             if history and len(history) > 0:
                 history_lines = []
                 for msg in history[-4:]:
-                    role = "User" if msg.get("role") == "user" else "Jarvis"
+                    role = "User" if msg.get("role") == "user" else "Manas"
                     content = msg.get("parts", "")
                     history_lines.append(f"{role}: {content}")
                 history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"
 
-            prompt = f"""{history_context}You are Jarvis, analyzing the user's emails to answer their question.
+            prompt = f"""{history_context}You are Manas, analyzing the user's emails to answer their question.
 Use history if the user's question refers to previous turns.
 
 User's question: "{transcript}"
@@ -2106,7 +2106,7 @@ Keep response under 3 sentences unless they asked for a detailed summary."""
             if history:
                 history_lines = []
                 for msg in history[-6:]:
-                    role = "User" if msg.get("role") == "user" else "Jarvis"
+                    role = "User" if msg.get("role") == "user" else "Manas"
                     content = msg.get("parts", "")
                     history_lines.append(f"{role}: {content}")
                 history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"
@@ -2297,7 +2297,7 @@ JSON:"""
                 history_context = ""
                 history_lines = []
                 for msg in history[-4:]:
-                    role = "User" if msg.get("role") == "user" else "Jarvis"
+                    role = "User" if msg.get("role") == "user" else "Manas"
                     content = msg.get("parts", "")
                     history_lines.append(f"{role}: {content}")
                 history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"
@@ -2416,7 +2416,7 @@ Resolved Request (short and factual):"""
             if history:
                 history_lines = []
                 for msg in history[-4:]:
-                    role = "User" if msg.get("role") == "user" else "Jarvis"
+                    role = "User" if msg.get("role") == "user" else "Manas"
                     content = msg.get("parts", "")
                     history_lines.append(f"{role}: {content}")
                 history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"
@@ -2515,7 +2515,7 @@ Fact to remember:"""
                     history_context = ""
                     history_lines = []
                     for msg in history[-4:]:
-                        role = "User" if msg.get("role") == "user" else "Jarvis"
+                        role = "User" if msg.get("role") == "user" else "Manas"
                         content = msg.get("parts", "")
                         history_lines.append(f"{role}: {content}")
                     history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"

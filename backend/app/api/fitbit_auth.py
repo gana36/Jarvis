@@ -169,7 +169,7 @@ async def fitbit_callback(code: str | None = None, error: str | None = None):
                     <div class="container">
                         <div class="success-icon">✓</div>
                         <h1>Fitbit Connected!</h1>
-                        <p>Your Fitbit has been successfully connected to Jarvis.</p>
+                        <p>Your Fitbit has been successfully connected to Manas.</p>
                         <p>You can now ask for your daily summary with health data!</p>
                         <button class="close-btn" onclick="window.close()">Close Window</button>
                     </div>
