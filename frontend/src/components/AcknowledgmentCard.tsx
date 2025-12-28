@@ -1,8 +1,8 @@
 import { forwardRef } from 'react';
 import { motion } from 'framer-motion';
-import { Calendar, CheckCircle, Cloud, Lightbulb, MessageSquare, X, Wind, Droplets, ExternalLink, Clock, AlertTriangle, Newspaper, MapPin, AlignLeft, Utensils, Star, Phone, Navigation } from 'lucide-react';
+import { Calendar, CheckCircle, Cloud, Lightbulb, MessageSquare, X, Wind, Droplets, ExternalLink, Clock, AlertTriangle, Newspaper, MapPin, AlignLeft, Utensils, Star, Phone, Navigation, Mail, Inbox, Archive, Trash2, ChevronRight } from 'lucide-react';
 
-export type CardType = 'calendar' | 'task' | 'weather' | 'memory' | 'info' | 'news' | 'restaurant';
+export type CardType = 'calendar' | 'task' | 'weather' | 'memory' | 'info' | 'news' | 'restaurant' | 'email';
 
 interface AcknowledgmentCardProps {
   type: CardType;
@@ -49,6 +49,11 @@ const cardConfig = {
     icon: Utensils,
     accentColor: 'hsl(10, 80%, 60%)',
     label: 'RESTAURANT',
+  },
+  email: {
+    icon: Mail,
+    accentColor: 'hsl(230, 70%, 55%)',
+    label: 'EMAIL',
   },
 };
 
@@ -428,6 +433,76 @@ const RestaurantView = ({ data }: { data: any }) => (
   </div>
 );
 
+const EmailListView = ({ data }: { data: any }) => (
+  <div className="mt-4 space-y-3 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+    <div className="flex items-center gap-2 mb-4 px-1">
+      <Inbox size={14} className="text-indigo-400/70" />
+      <span className="text-[10px] font-bold tracking-widest text-indigo-400/70 uppercase">Primary Inbox</span>
+    </div>
+    {data.emails?.map((email: any) => (
+      <div key={email.id} className="group/email p-4 rounded-2xl bg-white/[0.03] border border-white/5 hover:bg-white/[0.06] transition-all cursor-pointer relative overflow-hidden">
+        <div className="flex items-center justify-between gap-3 mb-1">
+          <span className="text-[10px] font-bold tracking-widest text-indigo-400 uppercase truncate">
+            {email.from.split('<')[0].trim()}
+          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-[9px] font-mono text-muted-foreground whitespace-nowrap">
+              {email.date.split(',')[1]?.split('202')[0].trim() || email.date}
+            </span>
+            <ChevronRight size={10} className="text-muted-foreground/30 group-hover/email:text-indigo-400 group-hover/email:translate-x-0.5 transition-all" />
+          </div>
+        </div>
+        <h4 className={`text-sm font-semibold truncate ${email.is_unread ? 'text-foreground' : 'text-foreground/70'}`}>
+          {email.subject}
+        </h4>
+        <p className="text-xs text-muted-foreground line-clamp-1 mt-1 font-light italic">
+          {email.snippet}
+        </p>
+      </div>
+    ))}
+  </div>
+);
+
+const EmailThreadView = ({ data }: { data: any }) => (
+  <div className="mt-4 space-y-6 max-h-[450px] overflow-y-auto pr-2 custom-scrollbar">
+    <div className="px-1 border-b border-white/5 pb-6 flex items-start justify-between gap-4">
+      <div className="flex-1">
+        <h4 className="text-xl font-light text-foreground tracking-tight leading-tight">
+          {data.subject}
+        </h4>
+        <div className="flex items-center gap-2 mt-3">
+          <div className="px-2 py-0.5 rounded-md bg-indigo-500/10 border border-indigo-500/20 text-[9px] font-bold text-indigo-400 tracking-widest uppercase">
+            {data.count} {data.count === 1 ? 'Message' : 'Messages'}
+          </div>
+        </div>
+      </div>
+      <div className="flex items-center gap-2 pt-1">
+        <button className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-muted-foreground hover:text-white transition-all" title="Archive">
+          <Archive size={14} />
+        </button>
+        <button className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-muted-foreground hover:text-red-400 transition-all" title="Delete">
+          <Trash2 size={14} />
+        </button>
+      </div>
+    </div>
+
+    <div className="space-y-8">
+      {data.messages?.map((msg: any, idx: number) => (
+        <div key={msg.id} className="relative pl-6 before:absolute before:left-0 before:top-2 before:bottom-0 before:w-px before:bg-white/10 last:before:hidden">
+          <div className="flex items-center justify-between mb-3 text-[10px] font-medium text-muted-foreground/60 tracking-wider">
+            <span className="text-foreground/80">{msg.from.split('<')[0].trim()}</span>
+            <span>{msg.date.split(',')[1]?.split('202')[0].trim() || msg.date}</span>
+          </div>
+          <div className="text-sm text-foreground/90 leading-relaxed font-light whitespace-pre-wrap selection:bg-indigo-500/30">
+            {msg.body || msg.snippet}
+          </div>
+          {idx < data.messages.length - 1 && <div className="h-px bg-white/5 mt-8 -ml-6" />}
+        </div>
+      ))}
+    </div>
+  </div>
+);
+
 export const AcknowledgmentCard = forwardRef<HTMLDivElement, AcknowledgmentCardProps>(
   ({ type, title, subtitle, data, onDismiss, isCitation = false }, ref) => {
     const config = cardConfig[type];
@@ -455,6 +530,10 @@ export const AcknowledgmentCard = forwardRef<HTMLDivElement, AcknowledgmentCardP
       if (type === 'memory') return <InsightBriefing data={data} />;
       if (type === 'news') return <NewsView data={data} />;
       if (type === 'restaurant') return <RestaurantView data={data} />;
+      if (type === 'email') {
+        if (data.messages) return <EmailThreadView data={data} />;
+        return <EmailListView data={data} />;
+      }
 
       // Task logic
       if (type === 'task') {

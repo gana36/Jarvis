@@ -358,6 +358,7 @@ export default function Index() {
         else if (intentLower.includes('learn')) cardType = 'memory';
         else if (intentLower.includes('news')) cardType = 'news';
         else if (intentLower.includes('restaurant')) cardType = 'restaurant';
+        else if (intentLower.includes('email')) cardType = 'email';
 
         setCards([{
           id: Date.now().toString(),

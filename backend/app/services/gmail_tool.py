@@ -158,6 +158,7 @@ class GmailTool:
                     
                     email_data = {
                         'id': msg['id'],
+                        'threadId': full_msg.get('threadId'),
                         'subject': headers.get('Subject', '(No Subject)'),
                         'from': headers.get('From', 'Unknown'),
                         'date': headers.get('Date', ''),
@@ -221,36 +222,68 @@ class GmailTool:
         query = f"after:{today}"
         return self.get_recent_emails(max_results=20, query=query)
 
-    def get_email_body(self, message_id: str) -> str:
+    def get_email_details(self, message_id: str) -> Dict[str, Any]:
         """
-        Get the full body text of an email.
-        
-        Args:
-            message_id: Gmail message ID
-            
-        Returns:
-            Email body text or empty string
+        Get full details of a specific email.
         """
         if not self.service:
-            logger.warning("Gmail service not available (not authorized)")
-            return ""
+            return {}
         
         try:
-            message = self.service.users().messages().get(
+            full_msg = self.service.users().messages().get(
                 userId='me',
                 id=message_id,
                 format='full'
             ).execute()
             
-            # Extract body from parts
-            payload = message.get('payload', {})
-            body = self._extract_body(payload)
+            headers = {h['name']: h['value'] for h in full_msg.get('payload', {}).get('headers', [])}
+            body = self._extract_body(full_msg.get('payload', {}))
             
-            return body
-            
+            return {
+                'id': message_id,
+                'threadId': full_msg.get('threadId'),
+                'subject': headers.get('Subject', '(No Subject)'),
+                'from': headers.get('From', 'Unknown'),
+                'to': headers.get('To', ''),
+                'date': headers.get('Date', ''),
+                'body': body,
+                'snippet': full_msg.get('snippet', ''),
+                'labelIds': full_msg.get('labelIds', [])
+            }
         except Exception as e:
-            logger.error(f"Failed to get email body: {e}")
-            return ""
+            logger.error(f"Failed to get email details: {e}")
+            return {}
+
+    def get_thread_messages(self, thread_id: str) -> List[Dict[str, Any]]:
+        """
+        Fetch all messages in a thread.
+        """
+        if not self.service:
+            return []
+        
+        try:
+            thread = self.service.users().threads().get(
+                userId='me',
+                id=thread_id
+            ).execute()
+            
+            messages = []
+            for msg in thread.get('messages', []):
+                headers = {h['name']: h['value'] for h in msg.get('payload', {}).get('headers', [])}
+                body = self._extract_body(msg.get('payload', {}))
+                
+                messages.append({
+                    'id': msg['id'],
+                    'from': headers.get('From', 'Unknown'),
+                    'date': headers.get('Date', ''),
+                    'body': body,
+                    'snippet': msg.get('snippet', '')
+                })
+            
+            return messages
+        except Exception as e:
+            logger.error(f"Failed to fetch thread {thread_id}: {e}")
+            return []
 
     def _extract_body(self, payload: Dict[str, Any]) -> str:
         """

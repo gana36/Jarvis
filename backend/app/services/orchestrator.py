@@ -295,6 +295,7 @@ class OrchestratorService:
             "DELETE_CALENDAR_EVENT": lambda t: self._handle_delete_calendar_event(t, user_id, history),
             "CHECK_EMAIL": lambda t: self._handle_check_email(t, user_id, history),
             "SEARCH_EMAIL": lambda t: self._handle_search_email(t, user_id, history),
+            "READ_EMAIL": lambda t: self._handle_read_email(t, user_id, history),
             "ANALYZE_EMAIL": lambda t: self._handle_analyze_email(t, user_id, history),
             "SEARCH_RESTAURANTS": lambda t: self._handle_search_restaurants(t, user_id, profile, history),
             "REMEMBER_THIS": lambda t: self._handle_remember_this(t, user_id, history),
@@ -2083,6 +2084,143 @@ Keep response under 3 sentences unless they asked for a detailed summary."""
                 "type": "email_analysis",
                 "data": {"error": str(e)},
                 "message": "I'm having trouble analyzing your emails right now."
+            }
+
+    async def _handle_read_email(self, transcript: str, user_id: str = "default", history: list = None) -> Dict[str, Any]:
+        """
+        Handle requests to read a specific email thread.
+        """
+        logger.info(f"Handler: READ_EMAIL for user {user_id}")
+        
+        try:
+            gmail_tool = get_gmail_tool(user_id=user_id)
+            if not gmail_tool.service:
+                return {
+                    "type": "email_thread",
+                    "data": {"error": "not_authorized"},
+                    "message": "I don't have access to your Gmail yet."
+                }
+
+            # Use Gemini to resolve WHICH email to read based on transcript and history
+            history_context = ""
+            if history:
+                history_lines = []
+                for msg in history[-6:]:
+                    role = "User" if msg.get("role") == "user" else "Jarvis"
+                    content = msg.get("parts", "")
+                    history_lines.append(f"{role}: {content}")
+                history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"
+
+            prompt = f"""{history_context}The user wants to read a specific email. 
+Identify the target email from the conversation history. 
+Look for things like "the first one", "the one from Sarah", "that flight email".
+
+Extract:
+- thread_id: the thread ID of the target email (if available in history)
+- message_id: the message ID (if available)
+- sender_name: name of the sender mentioned
+- subject_hint: some words from the subject
+
+Return ONLY JSON.
+{{ "thread_id": "...", "message_id": "...", "sender_hint": "...", "subject_hint": "..." }}
+
+Request: "{transcript}"
+JSON:"""
+
+            response = self.gemini_service.model.generate_content(
+                prompt,
+                generation_config={"temperature": 0.0, "max_output_tokens": 150}
+            )
+            
+            import json
+            res_text = response.text.strip()
+            if "```json" in res_text:
+                res_text = res_text.split("```json")[1].split("```")[0].strip()
+            
+            resolve_data = json.loads(res_text)
+            thread_id = resolve_data.get("thread_id")
+            message_id = resolve_data.get("message_id")
+            
+            # If we don't have a direct ID, search for it
+            if not thread_id and not message_id:
+                search_query = ""
+                if resolve_data.get("sender_hint"):
+                    search_query += f"from:{resolve_data['sender_hint']} "
+                if resolve_data.get("subject_hint"):
+                    search_query += f"subject:{resolve_data['subject_hint']} "
+                
+                if not search_query:
+                    search_query = transcript
+                
+                logger.info(f"🔍 READ_EMAIL: Searching for target email with query: '{search_query}'")
+                search_results = gmail_tool.search_emails(f"category:primary {search_query}", max_results=1)
+                
+                if search_results:
+                    message_id = search_results[0]['id']
+                    # We'll fetch the full details below to get threadId
+            
+            if not message_id and not thread_id:
+                return {
+                    "type": "email_thread",
+                    "data": {"error": "not_found"},
+                    "message": "I couldn't figure out which email you'd like me to read. Could you be more specific?"
+                }
+
+            # Fetch thread details
+            if not thread_id and message_id:
+                details = gmail_tool.get_email_details(message_id)
+                thread_id = details.get("threadId")
+
+            if thread_id:
+                messages = gmail_tool.get_thread_messages(thread_id)
+                if messages:
+                    # Get shared subject from last message headers if needed
+                    first_msg = gmail_tool.get_email_details(messages[0]['id'])
+                    subject = first_msg.get('subject', 'No Subject')
+                    
+                    return {
+                        "type": "email_thread",
+                        "data": {
+                            "thread_id": thread_id,
+                            "subject": subject,
+                            "messages": messages,
+                            "count": len(messages)
+                        },
+                        "message": f"I've opened the thread '{subject}'. It has {len(messages)} message{'s' if len(messages) != 1 else ''}."
+                    }
+            
+            # Fallback to single message
+            if message_id:
+                details = gmail_tool.get_email_details(message_id)
+                return {
+                    "type": "email_thread",
+                    "data": {
+                        "thread_id": details.get("threadId"),
+                        "subject": details.get('subject'),
+                        "messages": [{
+                            "id": message_id,
+                            "from": details.get('from'),
+                            "date": details.get('date'),
+                            "body": details.get('body'),
+                            "snippet": details.get('snippet')
+                        }],
+                        "count": 1
+                    },
+                    "message": f"Here is the email from {details.get('from')}."
+                }
+
+            return {
+                "type": "email_thread",
+                "data": {"error": "failed_retrieval"},
+                "message": "I had trouble loading that email. Please try again."
+            }
+
+        except Exception as e:
+            logger.error(f"Read email handler failed: {e}")
+            return {
+                "type": "email_thread",
+                "data": {"error": str(e)},
+                "message": "I'm having trouble opening that email right now."
             }
 
     async def _handle_search_restaurants(
