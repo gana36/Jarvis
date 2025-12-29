@@ -1,12 +1,16 @@
 import { motion } from 'framer-motion';
 
 export type OrbState = 'idle' | 'listening' | 'thinking' | 'speaking';
-export type OrbContext = 'default' | 'morning' | 'focus' | 'weather' | 'memory';
+export type OrbContext = 'default' | 'morning' | 'focus' | 'weather' | 'memory' | 'analyze';
 
 interface JarvisOrbProps {
   state: OrbState;
   context?: OrbContext;
   audioLevel?: number;
+  isSwallowing?: boolean;
+  uploadedFilesCount?: number;
+  onFileDrop?: (files: File[]) => void;
+  onClick?: () => void;
 }
 
 const contextColors = {
@@ -15,13 +19,39 @@ const contextColors = {
   focus: { primary: '#2dd4bf', secondary: '#14b8a6', tertiary: '#0d9488' },
   weather: { primary: '#60a5fa', secondary: '#3b82f6', tertiary: '#2563eb' },
   memory: { primary: '#a78bfa', secondary: '#8b5cf6', tertiary: '#7c3aed' },
+  analyze: { primary: '#f59e0b', secondary: '#d97706', tertiary: '#b45309' },
 };
 
-export function JarvisOrb({ state, context = 'default', audioLevel = 0 }: JarvisOrbProps) {
+export function JarvisOrb({
+  state,
+  context = 'default',
+  audioLevel = 0,
+  isSwallowing = false,
+  uploadedFilesCount = 0,
+  onFileDrop,
+  onClick
+}: JarvisOrbProps) {
   const colors = contextColors[context];
 
   return (
-    <div className="relative flex items-center justify-center" style={{ width: 320, height: 320 }}>
+    <motion.div
+      className="relative flex items-center justify-center cursor-pointer"
+      style={{ width: 320, height: 320 }}
+      onClick={onClick}
+      onDragOver={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (onFileDrop && e.dataTransfer.files.length > 0) {
+          onFileDrop(Array.from(e.dataTransfer.files));
+        }
+      }}
+      whileHover={{ scale: 1.02 }}
+      whileTap={{ scale: 0.98 }}
+    >
       {/* Outermost ambient glow */}
       <motion.div
         className="absolute rounded-full"
@@ -67,7 +97,7 @@ export function JarvisOrb({ state, context = 'default', audioLevel = 0 }: Jarvis
         <>
           <motion.div
             className="absolute rounded-full"
-            style={{ 
+            style={{
               width: 280,
               height: 280,
               border: `2px dashed ${colors.primary}80`,
@@ -77,7 +107,7 @@ export function JarvisOrb({ state, context = 'default', audioLevel = 0 }: Jarvis
           />
           <motion.div
             className="absolute rounded-full"
-            style={{ 
+            style={{
               width: 250,
               height: 250,
               border: `1.5px dashed ${colors.secondary}60`,
@@ -87,7 +117,7 @@ export function JarvisOrb({ state, context = 'default', audioLevel = 0 }: Jarvis
           />
           <motion.div
             className="absolute rounded-full"
-            style={{ 
+            style={{
               width: 220,
               height: 220,
               border: `1px solid ${colors.tertiary}40`,
@@ -247,15 +277,18 @@ export function JarvisOrb({ state, context = 'default', audioLevel = 0 }: Jarvis
           border: `2px solid ${colors.primary}90`,
         }}
         animate={{
-          scale: state === 'idle' 
-            ? [1, 1.04, 1] 
-            : state === 'speaking' 
-              ? [1, 1 + audioLevel * 0.06, 1] 
-              : 1,
+          scale: isSwallowing
+            ? [1, 1.2, 0.8, 1.1, 1]
+            : state === 'idle'
+              ? [1, 1.04, 1]
+              : state === 'speaking'
+                ? [1, 1 + audioLevel * 0.06, 1]
+                : 1,
+          rotate: isSwallowing ? [0, 15, -15, 10, -10, 0] : 0,
         }}
         transition={{
-          duration: state === 'idle' ? 4 : 0.12,
-          repeat: Infinity,
+          duration: isSwallowing ? 0.6 : state === 'idle' ? 4 : 0.12,
+          repeat: isSwallowing ? 0 : Infinity,
           ease: 'easeInOut',
         }}
       >
@@ -379,6 +412,40 @@ export function JarvisOrb({ state, context = 'default', audioLevel = 0 }: Jarvis
           })}
         </svg>
       )}
-    </div>
+      {/* Uploaded files indicators - Orbiting dots */}
+      {uploadedFilesCount > 0 && (
+        <div className="absolute inset-0 pointer-events-none">
+          {[...Array(uploadedFilesCount)].map((_, i) => (
+            <motion.div
+              key={`uploaded-${i}`}
+              className="absolute rounded-full"
+              style={{
+                width: 8,
+                height: 8,
+                background: colors.primary,
+                boxShadow: `0 0 10px ${colors.primary}`,
+                left: '50%',
+                top: '50%',
+              }}
+              animate={{
+                x: [
+                  Math.cos((i / uploadedFilesCount) * Math.PI * 2) * 110,
+                  Math.cos((i / uploadedFilesCount) * Math.PI * 2 + Math.PI * 2) * 110
+                ],
+                y: [
+                  Math.sin((i / uploadedFilesCount) * Math.PI * 2) * 110,
+                  Math.sin((i / uploadedFilesCount) * Math.PI * 2 + Math.PI * 2) * 110
+                ],
+              }}
+              transition={{
+                duration: 10 + i * 2,
+                repeat: Infinity,
+                ease: 'linear',
+              }}
+            />
+          ))}
+        </div>
+      )}
+    </motion.div>
   );
 }

@@ -248,7 +248,8 @@ class YelpTool:
         query: str,
         latitude: Optional[float] = None,
         longitude: Optional[float] = None,
-        locale: str = "en_US"
+        locale: str = "en_US",
+        chat_id: Optional[str] = None
     ) -> ChatResponse:
         """
         Search for restaurants using natural language
@@ -266,7 +267,8 @@ class YelpTool:
             query=query,
             latitude=latitude,
             longitude=longitude,
-            locale=locale
+            locale=locale,
+            chat_id=chat_id
         )
 
 

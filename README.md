@@ -1,4 +1,4 @@
-# Mini Jarvis 🎙️
+# Mini Manas 🎙️
 
 A low-latency, voice-first assistant built with streaming architecture.
 

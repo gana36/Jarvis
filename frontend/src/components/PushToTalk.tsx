@@ -231,7 +231,7 @@ export default function PushToTalk() {
 
             {aiResponse && (
                 <div style={{ marginTop: '12px', padding: '12px', backgroundColor: '#e0f2fe', borderRadius: '8px' }}>
-                    <div style={{ fontSize: '12px', color: '#0369a1', marginBottom: '4px' }}>Jarvis:</div>
+                    <div style={{ fontSize: '12px', color: '#0369a1', marginBottom: '4px' }}>Manas:</div>
                     <div style={{ fontSize: '16px', color: '#111' }}>{aiResponse}</div>
                 </div>
             )}

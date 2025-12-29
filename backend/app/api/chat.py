@@ -15,6 +15,7 @@ class ChatRequest(BaseModel):
     """Request for text chat endpoint"""
     message: str
     voice_id: str | None = None
+    file_ids: list[str] | None = None
 
 
 class ChatResponse(BaseModel):
@@ -57,7 +58,7 @@ async def send_message(
         from app.services.orchestrator import get_orchestrator
         
         orchestrator = get_orchestrator()
-        orchestrator_result = await orchestrator.process_transcript(user_message, user_id)
+        orchestrator_result = await orchestrator.process_transcript(user_message, user_id, file_ids=request.file_ids)
         
         # Extract intent info
         intent = orchestrator_result["intent"]

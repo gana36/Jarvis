@@ -8,7 +8,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, voice, chat, tasks, profile, fitbit_auth, gmail_auth
+from app.api import auth, voice, chat, tasks, profile, fitbit_auth, gmail_auth, files
 from app.config import setup_google_credentials, get_settings
 
 # Set up Google Cloud credentials from .env
@@ -21,7 +21,7 @@ if settings.google_project_id and not os.getenv('GOOGLE_CLOUD_PROJECT'):
     print(f"Set GOOGLE_CLOUD_PROJECT to {settings.google_project_id}")
 
 app = FastAPI(
-    title="Mini Jarvis API",
+    title="Mini Manas API",
     description="Low-latency voice assistant backend",
     version="0.1.0",
 )
@@ -43,11 +43,12 @@ app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(fitbit_auth.router, prefix="/auth", tags=["fitbit-auth"])
 app.include_router(gmail_auth.router, prefix="/auth", tags=["gmail-auth"])
 app.include_router(profile.router, prefix="/api", tags=["profile"])
+app.include_router(files.router, prefix="/api/files", tags=["files"])
 
 
 @app.get("/")
 async def root():
-    return {"message": "Mini Jarvis API - Backend placeholder"}
+    return {"message": "Mini Manas API - Backend placeholder"}
 
 
 @app.get("/health")

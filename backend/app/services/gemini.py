@@ -1,6 +1,7 @@
-"""Gemini AI service for conversational responses"""
 import logging
+import mimetypes
 from functools import lru_cache
+from typing import List, Optional, Dict, Any
 
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
@@ -35,7 +36,7 @@ class GeminiService:
         )
         logger.info("✓ Gemini Flash service initialized")
 
-    async def generate_response(self, user_message: str, profile: dict = None, history: list = None, memory_context: str = None) -> str:
+    async def generate_response(self, user_message: str, profile: dict = None, history: list = None, memory_context: str = None, file_paths: List[str] = None) -> str:
         """
         Generate a conversational response to user input.
         
@@ -44,6 +45,7 @@ class GeminiService:
             profile: Optional user profile for personalization
             history: Optional conversation history for context
             memory_context: Optional long-term memory context about the user
+            file_paths: Optional list of paths to images or documents
             
         Returns:
             Conversational response
@@ -75,7 +77,7 @@ class GeminiService:
             if history and len(history) > 0:
                 history_lines = []
                 for msg in history[-6:]:  # Last 6 messages (3 exchanges)
-                    role = "User" if msg.get("role") == "user" else "Jarvis"
+                    role = "User" if msg.get("role") == "user" else "Manas"
                     content = msg.get("parts", "")
                     history_lines.append(f"{role}: {content}")
                 history_context = "\n".join(history_lines) + "\n\n"
@@ -86,17 +88,39 @@ class GeminiService:
                 memory_section = f"{memory_context}\n\n"
             
             # Construct prompt with personality, context, and memories
-            prompt = f"""You are Jarvis, a helpful and friendly personal AI assistant. You are concise, warm, and conversational. Respond naturally as if chatting with a friend. Keep responses brief (1-2 sentences).
+            prompt = f"""You are Manas, a helpful and friendly personal AI assistant. You are concise, warm, and conversational. Respond naturally as if chatting with a friend. Keep responses brief (1-2 sentences).
 
 IMPORTANT: When referencing the user's personal information below, use "your" (e.g., "your favorite color is blue"), never "my".
 
 {memory_section}Your capabilities: weather queries, task management (add/complete/update/delete tasks), calendar events (create/update/delete), daily summaries, task reminders, and general conversation.
 {profile_context}{history_context}User: {user_message}
-Jarvis:"""
+Manas:"""
 
-            # Generate response with minimal configuration for speed
+            # Prepare parts for multimodal content
+            prompt_parts = [prompt]
+            
+            # Add files if provided
+            if file_paths:
+                for path in file_paths:
+                    try:
+                        mime_type, _ = mimetypes.guess_type(path)
+                        # Default to octet-stream if unknown
+                        mime_type = mime_type or "application/octet-stream"
+                        
+                        with open(path, "rb") as f:
+                            data = f.read()
+                        
+                        prompt_parts.append({
+                            "mime_type": mime_type,
+                            "data": data
+                        })
+                        logger.info(f"Added file to Gemini prompt: {path} ({mime_type})")
+                    except Exception as e:
+                        logger.error(f"Failed to load file for Gemini: {path}, error: {e}")
+
+            # Generate response with parts
             response = self.model.generate_content(
-                prompt,
+                prompt_parts,
                 generation_config={
                     "temperature": 0.7,
                     "top_p": 0.95,
@@ -114,7 +138,7 @@ Jarvis:"""
             # Return friendly fallback response
             return "I'm having trouble thinking right now. Can you try again?"
 
-    async def generate_response_stream(self, user_message: str, profile: dict = None, history: list = None):
+    async def generate_response_stream(self, user_message: str, profile: dict = None, history: list = None, file_paths: List[str] = None):
         """
         Generate a conversational response with streaming, with optional profile context and history.
         
@@ -122,6 +146,7 @@ Jarvis:"""
             user_message: User's transcribed message
             profile: Optional user profile for personalization
             history: Optional conversation history for context
+            file_paths: Optional list of paths to images or documents
             
         Yields:
             Text chunks as they're generated
@@ -153,22 +178,43 @@ Jarvis:"""
             if history and len(history) > 0:
                 history_lines = []
                 for msg in history[-6:]:  # Last 6 messages (3 exchanges)
-                    role = "User" if msg.get("role") == "user" else "Jarvis"
+                    role = "User" if msg.get("role") == "user" else "Manas"
                     content = msg.get("parts", "")
                     history_lines.append(f"{role}: {content}")
                 history_context = "\n".join(history_lines) + "\n\n"
             
             # Construct prompt with personality and context
-            prompt = f"""You are Jarvis, a helpful and friendly personal AI assistant. You are concise, warm, and conversational. Respond naturally as if chatting with a friend. Keep responses brief (1-2 sentences).
+            prompt = f"""You are Manas, a helpful and friendly personal AI assistant. You are concise, warm, and conversational. Respond naturally as if chatting with a friend. Keep responses brief (1-2 sentences).
 
 
 Your capabilities: weather queries, task management (add/complete/update/delete tasks), calendar events (create/update/delete), daily summaries, task reminders, and general conversation.
 {profile_context}{history_context}User: {user_message}
-Jarvis:"""
+Manas:"""
+
+            # Prepare parts for multimodal content
+            prompt_parts = [prompt]
+            
+            # Add files if provided
+            if file_paths:
+                for path in file_paths:
+                    try:
+                        mime_type, _ = mimetypes.guess_type(path)
+                        mime_type = mime_type or "application/octet-stream"
+                        
+                        with open(path, "rb") as f:
+                            data = f.read()
+                        
+                        prompt_parts.append({
+                            "mime_type": mime_type,
+                            "data": data
+                        })
+                        logger.info(f"Added file to Gemini stream prompt: {path} ({mime_type})")
+                    except Exception as e:
+                        logger.error(f"Failed to load file for Gemini stream: {path}, error: {e}")
 
             # Generate response with streaming enabled
             response = self.model.generate_content(
-                prompt,
+                prompt_parts,
                 generation_config={
                     "temperature": 0.7,
                     "top_p": 0.95,
@@ -188,12 +234,13 @@ Jarvis:"""
             logger.error(f"Gemini streaming error: {e}")
             yield "I'm having trouble thinking right now."
 
-    async def classify_and_extract(self, user_message: str) -> dict:
+    async def classify_and_extract(self, user_message: str, history: list = None) -> dict:
         """
         Classify intent AND extract relevant details in a single LLM call.
         
         Args:
             user_message: User's message
+            history: Optional conversation history for context
             
         Returns:
             Dict with 'intent', 'confidence', and 'details' (null for simple intents)
@@ -212,15 +259,26 @@ Jarvis:"""
             current_date = now.strftime("%Y-%m-%d")
             day_of_week = now.strftime("%A")
             
+            # Build conversation history if available
+            history_context = ""
+            if history and len(history) > 0:
+                history_lines = []
+                for msg in history[-4:]:  # Last 4 messages for classification context
+                    role = "User" if msg.get("role") == "user" else "Manas"
+                    content = msg.get("parts", "")
+                    history_lines.append(f"{role}: {content}")
+                history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"
+
             # Unified prompt for classification + extraction
-            prompt = f"""Classify intent and extract details if applicable. Return JSON only.
+            prompt = f"""{history_context}Classify intent and extract details if applicable. Return JSON only.
+Use the conversation history above to resolve pronouns like "that", "those", or "the one" if the current input is a follow-up.
 
 Current time: {current_time}
 Current date: {current_date} ({day_of_week})
 
 Input: "{user_message}"
 
-Intents: GET_WEATHER, ADD_TASK, COMPLETE_TASK, UPDATE_TASK, DELETE_TASK, LIST_TASKS, GET_TASK_REMINDERS, DAILY_SUMMARY, CREATE_CALENDAR_EVENT, UPDATE_CALENDAR_EVENT, DELETE_CALENDAR_EVENT, CHECK_EMAIL, SEARCH_EMAIL, ANALYZE_EMAIL, SEARCH_RESTAURANTS, REMEMBER_THIS, RECALL_MEMORY, FORGET_THIS, LEARN, GET_NEWS, GENERAL_CHAT
+Intents: GET_WEATHER, ADD_TASK, COMPLETE_TASK, UPDATE_TASK, DELETE_TASK, LIST_TASKS, GET_TASK_REMINDERS, DAILY_SUMMARY, CREATE_CALENDAR_EVENT, UPDATE_CALENDAR_EVENT, DELETE_CALENDAR_EVENT, CHECK_EMAIL, SEARCH_EMAIL, READ_EMAIL, ANALYZE_EMAIL, SEARCH_RESTAURANTS, REMEMBER_THIS, RECALL_MEMORY, FORGET_THIS, LEARN, GET_NEWS, GENERAL_CHAT
 
 For calendar intents, extract:
 - title: event name (clean, no articles)
@@ -277,19 +335,31 @@ Examples:
             # Fallback to generic chat
             return {"intent": "GENERAL_CHAT", "confidence": 0.5, "details": null}
 
-    async def classify_intent(self, user_message: str) -> dict:
+    async def classify_intent(self, user_message: str, history: list = None) -> dict:
         """
         Classify user intent using minimal prompt for speed.
         
         Args:
             user_message: User's transcribed message
+            history: Optional conversation history for context
             
         Returns:
             Dict with 'intent' and 'confidence' fields
         """
         try:
+            # Build conversation history if available
+            history_context = ""
+            if history and len(history) > 0:
+                history_lines = []
+                for msg in history[-4:]:  # Last 4 messages for classification context
+                    role = "User" if msg.get("role") == "user" else "Manas"
+                    content = msg.get("parts", "")
+                    history_lines.append(f"{role}: {content}")
+                history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"
+
             # Ultra-minimal prompt for speed
-            prompt = f"""Classify intent. Return JSON only.
+            prompt = f"""{history_context}Classify intent. Return JSON only.
+If the input is a follow-up (e.g., "more casual", "closest one", "how about that?"), use the history to determine the intent.
 
 Input: "{user_message}"
 
@@ -363,12 +433,13 @@ Output format:
             # Fallback to generic chat
             return {"intent": "GENERAL_CHAT", "confidence": 0.5}
 
-    async def extract_calendar_event(self, user_message: str) -> dict:
+    async def extract_calendar_event(self, user_message: str, history: list = None) -> dict:
         """
         Extract calendar event details from natural language.
         
         Args:
             user_message: User's request (e.g., "create movie event at 6pm today")
+            history: Optional conversation history for context
             
         Returns:
             Dict with 'title', 'hour', 'minute', 'am_pm' fields
@@ -382,8 +453,19 @@ Output format:
             current_time = now.strftime("%I:%M %p")
             current_date = now.strftime("%Y-%m-%d")
             
+            # Build conversation history if available
+            history_context = ""
+            if history and len(history) > 0:
+                history_lines = []
+                for msg in history[-4:]:
+                    role = "User" if msg.get("role") == "user" else "Manas"
+                    content = msg.get("parts", "")
+                    history_lines.append(f"{role}: {content}")
+                history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"
+
             # Minimal prompt for fast extraction
-            prompt = f"""Extract calendar event details. Return JSON only.
+            prompt = f"""{history_context}Extract calendar event details. Return JSON only.
+Use the history above to resolve pronouns or dates (e.g., "at that same time tomorrow").
 
 Current time: {current_time}
 Current date: {current_date}
@@ -426,12 +508,13 @@ Output format:
             # Fallback to defaults
             return {"title": "New Event", "hour": datetime.now().hour + 1, "minute": 0}
 
-    async def extract_calendar_update(self, user_message: str) -> dict:
+    async def extract_calendar_update(self, user_message: str, history: list = None) -> dict:
         """
         Extract calendar update details from natural language.
         
         Args:
             user_message: User's request (e.g., "change movie to 7pm")
+            history: Optional conversation history for context
             
         Returns:
             Dict with 'event_name', 'new_title', 'new_hour', 'new_minute'
@@ -442,8 +525,19 @@ Output format:
             now = datetime.now()
             current_time = now.strftime("%I:%M %p")
             
+            # Build conversation history if available
+            history_context = ""
+            if history and len(history) > 0:
+                history_lines = []
+                for msg in history[-4:]:
+                    role = "User" if msg.get("role") == "user" else "Manas"
+                    content = msg.get("parts", "")
+                    history_lines.append(f"{role}: {content}")
+                history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"
+
             # Minimal prompt for fast extraction
-            prompt = f"""Extract calendar update details. Return JSON only.
+            prompt = f"""{history_context}Extract calendar update details. Return JSON only.
+Use the history to identify which event the user is referring to if using pronouns.
 
 Current time: {current_time}
 

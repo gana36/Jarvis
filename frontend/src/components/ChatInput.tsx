@@ -203,7 +203,7 @@ export default function ChatInput() {
                         marginTop: '40px',
                         fontSize: '14px',
                     }}>
-                        Start a conversation with Jarvis...
+                        Start a conversation with Manas...
                     </div>
                 ) : (
                     messages.map((msg, idx) => (

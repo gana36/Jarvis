@@ -19,19 +19,22 @@ async function getAuthToken(): Promise<string | null> {
   if (!user) {
     return null;
   }
-  return await user.getIdToken();
+  // Force refresh to avoid expiration issues on backend
+  return await user.getIdToken(true);
 }
 
 // Voice API
 export const voiceAPI = {
-  async ingestAudio(audioBlob: Blob, voiceId?: string): Promise<IngestResponse> {
+  async ingestAudio(audioBlob: Blob, voiceId?: string, fileIds?: string[]): Promise<IngestResponse> {
     const formData = new FormData();
     formData.append('audio', audioBlob, 'audio.webm');
     if (voiceId) {
       formData.append('voice_id', voiceId);
     }
+    if (fileIds && fileIds.length > 0) {
+      formData.append('file_ids', JSON.stringify(fileIds));
+    }
 
-    // Get auth token
     const token = await getAuthToken();
     const headers: HeadersInit = {};
     if (token) {
@@ -45,7 +48,8 @@ export const voiceAPI = {
     });
 
     if (!response.ok) {
-      throw new Error(`Voice API error: ${response.statusText}`);
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`Voice API error: ${errorData.detail || response.statusText}`);
     }
 
     return response.json();
@@ -54,7 +58,7 @@ export const voiceAPI = {
 
 // Chat API
 export const chatAPI = {
-  async sendMessage(message: string, voiceId?: string): Promise<any> {
+  async sendMessage(message: string, voiceId?: string, fileIds?: string[]): Promise<any> {
     const token = await getAuthToken();
     const headers: HeadersInit = {
       'Content-Type': 'application/json',
@@ -66,11 +70,12 @@ export const chatAPI = {
     const response = await fetch(`${API_BASE_URL}/chat/send`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ message, voice_id: voiceId }),
+      body: JSON.stringify({ message, voice_id: voiceId, file_ids: fileIds }),
     });
 
     if (!response.ok) {
-      throw new Error(`Chat API error: ${response.statusText}`);
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`Chat API error: ${errorData.detail || response.statusText}`);
     }
 
     return response.json();
@@ -93,7 +98,8 @@ export const tasksAPI = {
 
     const response = await fetch(url.toString(), { headers });
     if (!response.ok) {
-      throw new Error(`Tasks API error: ${response.statusText}`);
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`Tasks API error: ${errorData.detail || response.statusText}`);
     }
 
     return response.json();
@@ -108,7 +114,8 @@ export const tasksAPI = {
 
     const response = await fetch(`${API_BASE_URL}/tasks/${taskId}`, { headers });
     if (!response.ok) {
-      throw new Error(`Tasks API error: ${response.statusText}`);
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`Tasks API error: ${errorData.detail || response.statusText}`);
     }
 
     return response.json();
@@ -130,7 +137,8 @@ export const tasksAPI = {
     });
 
     if (!response.ok) {
-      throw new Error(`Tasks API error: ${response.statusText}`);
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`Tasks API error: ${errorData.detail || response.statusText}`);
     }
 
     return response.json();
@@ -152,7 +160,8 @@ export const tasksAPI = {
     });
 
     if (!response.ok) {
-      throw new Error(`Tasks API error: ${response.statusText}`);
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`Tasks API error: ${errorData.detail || response.statusText}`);
     }
 
     return response.json();
@@ -171,7 +180,8 @@ export const tasksAPI = {
     });
 
     if (!response.ok) {
-      throw new Error(`Tasks API error: ${response.statusText}`);
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`Tasks API error: ${errorData.detail || response.statusText}`);
     }
   },
 };
@@ -190,7 +200,8 @@ export const profileAPI = {
     });
 
     if (!response.ok) {
-      throw new Error(`Profile API error: ${response.statusText}`);
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`Profile API error: ${errorData.detail || response.statusText}`);
     }
 
     return response.json();
@@ -212,7 +223,8 @@ export const profileAPI = {
     });
 
     if (!response.ok) {
-      throw new Error(`Profile API error: ${response.statusText}`);
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`Profile API error: ${errorData.detail || response.statusText}`);
     }
 
     return response.json();
@@ -241,7 +253,8 @@ export const calendarAPI = {
     });
 
     if (!response.ok) {
-      throw new Error(`Calendar API error: ${response.statusText}`);
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`Calendar API error: ${errorData.detail || response.statusText}`);
     }
 
     return response.json();
@@ -250,5 +263,32 @@ export const calendarAPI = {
   async getConnectUrl(): Promise<string> {
     const token = await getAuthToken();
     return `${API_BASE_URL.replace('/api', '')}/auth/google/calendar?token=${token}`;
+  },
+};
+
+// Files API
+export const filesAPI = {
+  async upload(file: File): Promise<{ file_id: string; filename: string; content_type: string; size: number }> {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const token = await getAuthToken();
+    const headers: HeadersInit = {};
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    const response = await fetch(`${API_BASE_URL}/files/upload`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`Files API error: ${errorData.detail || response.statusText}`);
+    }
+
+    return response.json();
   },
 };

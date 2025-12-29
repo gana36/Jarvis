@@ -32,6 +32,7 @@ class IngestResponse(BaseModel):
 async def ingest_audio(
     audio: UploadFile = File(...),
     voice_id: str | None = Form(None),
+    file_ids: str | None = Form(None),
     user_id: str = Depends(get_current_user)
 ):
     """
@@ -87,7 +88,17 @@ async def ingest_audio(
                 from app.services.orchestrator import get_orchestrator
                 
                 orchestrator = get_orchestrator()
-                orchestrator_result = await orchestrator.process_transcript(transcript, user_id)
+                parsed_file_ids = None
+                if file_ids:
+                    try:
+                        import json
+                        parsed_file_ids = json.loads(file_ids)
+                        if not isinstance(parsed_file_ids, list):
+                            parsed_file_ids = [file_ids]
+                    except:
+                        parsed_file_ids = [file_ids]
+                
+                orchestrator_result = await orchestrator.process_transcript(transcript, user_id, file_ids=parsed_file_ids)
                 
                 # Extract intent info for response
                 intent_result = {
@@ -159,6 +170,8 @@ async def ingest_audio(
 async def ingest_audio_stream(
     audio: UploadFile = File(...),
     voice_id: str | None = Form(None),
+    file_ids: str | None = Form(None),
+    user_id: str = Depends(get_current_user)
 ):
     """
     Ingest audio and stream the TTS response for lower latency.
@@ -216,7 +229,17 @@ async def ingest_audio_stream(
                 
                 # Stream text from orchestrator (handles intent routing)
                 async def text_generator():
-                    async for text_chunk, chunk_intent, chunk_confidence in orchestrator.process_transcript_stream(transcript, user_id):
+                    parsed_file_ids = None
+                    if file_ids:
+                        try:
+                            import json
+                            parsed_file_ids = json.loads(file_ids)
+                            if not isinstance(parsed_file_ids, list):
+                                parsed_file_ids = [file_ids]
+                        except:
+                            parsed_file_ids = [file_ids]
+                            
+                    async for text_chunk, chunk_intent, chunk_confidence in orchestrator.process_transcript_stream(transcript, user_id, file_ids=parsed_file_ids):
                         # Capture intent/confidence from first chunk for headers
                         if intent_header == "GENERAL_CHAT": # Only update on first valid intent
                             intent_header = chunk_intent

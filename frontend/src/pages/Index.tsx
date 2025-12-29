@@ -8,7 +8,7 @@ import { StatusIndicator } from '@/components/StatusIndicator';
 import { SettingsPanel } from '@/components/SettingsPanel';
 import { TasksView } from '@/components/TasksView';
 import { ProfileView } from '@/components/ProfileView';
-import { voiceAPI, chatAPI, profileAPI } from '@/services/api';
+import { voiceAPI, chatAPI, profileAPI, filesAPI } from '@/services/api';
 
 interface Card {
   id: string;
@@ -35,9 +35,13 @@ export default function Index() {
   const [textInput, setTextInput] = useState('');
   const [isTextPanelOpen, setIsTextPanelOpen] = useState(false);
   const [currentIntent, setCurrentIntent] = useState<string>('');
+  const [pendingFileIds, setPendingFileIds] = useState<string[]>([]);
+  const [isSwallowing, setIsSwallowing] = useState(false);
+  const [isAnalysisMode, setIsAnalysisMode] = useState(false);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Load voices and profile on mount
   useEffect(() => {
@@ -170,11 +174,18 @@ export default function Index() {
   };
 
   const uploadAudio = async (audioBlob: Blob) => {
+    clearCards(true);
     setOrbState('thinking');
     setShowUnderstanding(false);
 
+    // Clear pending files and exit analysis mode immediately for better UX
+    const filesToUpload = [...pendingFileIds];
+    setPendingFileIds([]);
+    setIsAnalysisMode(false);
+    setOrbContext('default');
+
     try {
-      const result = await voiceAPI.ingestAudio(audioBlob, selectedVoice);
+      const result = await voiceAPI.ingestAudio(audioBlob, selectedVoice, filesToUpload);
 
       // Only process if we got a valid transcript
       if (!result.transcript || result.transcript.trim() === '') {
@@ -224,6 +235,8 @@ export default function Index() {
           cardType = 'memory';
         } else if (intentLower.includes('news')) {
           cardType = 'news';
+        } else if (intentLower.includes('restaurant')) {
+          cardType = 'restaurant';
         }
 
         const mainCard: Card = {
@@ -321,8 +334,14 @@ export default function Index() {
     setCurrentTranscript(trimmed);
     setTextInput('');
 
+    // Clear pending files and exit analysis mode immediately for better UX
+    const filesToProcess = [...pendingFileIds];
+    setPendingFileIds([]);
+    setIsAnalysisMode(false);
+    setOrbContext('default');
+
     try {
-      const result = await chatAPI.sendMessage(trimmed, selectedVoice);
+      const result = await chatAPI.sendMessage(trimmed, selectedVoice, filesToProcess);
 
       if (!result.success) {
         setOrbState('idle');
@@ -355,6 +374,8 @@ export default function Index() {
         else if (intentLower.includes('calendar')) cardType = 'calendar';
         else if (intentLower.includes('learn')) cardType = 'memory';
         else if (intentLower.includes('news')) cardType = 'news';
+        else if (intentLower.includes('restaurant')) cardType = 'restaurant';
+        else if (intentLower.includes('email')) cardType = 'email';
 
         setCards([{
           id: Date.now().toString(),
@@ -436,6 +457,53 @@ export default function Index() {
     setCitationCards((prev) => prev.filter((card) => card.id !== id));
   }, []);
 
+  const handleFilesUpload = async (files: File[]) => {
+    setIsSwallowing(true);
+    const newFileIds: string[] = [];
+
+    for (const file of files) {
+      try {
+        console.log(`📤 Uploading file: ${file.name}`);
+        const response = await filesAPI.upload(file);
+        newFileIds.push(response.file_id);
+      } catch (err) {
+        console.error(`Failed to upload ${file.name}:`, err);
+        setCards(prev => [{
+          id: Date.now().toString(),
+          type: 'info',
+          title: `Failed to upload ${file.name}`,
+          subtitle: 'ERROR',
+        }, ...prev]);
+      }
+    }
+
+    if (newFileIds.length > 0) {
+      setPendingFileIds(newFileIds);
+      setIsAnalysisMode(true);
+      setOrbContext('analyze');
+      console.log(`✅ Uploaded ${newFileIds.length} files. Entered Analysis Mode (Replacing previous files if any).`);
+
+      // Replace existing acknowledgement cards with fresh one
+      setCards(prev => [
+        {
+          id: `ack-${Date.now()}`,
+          type: 'info',
+          title: 'Document Transferred',
+          subtitle: 'ANALYSIS MODE ACTIVE',
+          data: { message: 'Manas is ready to analyze your file. Ask a question or request a summary.' }
+        },
+        ...prev.filter(c => !c.id.startsWith('ack-'))
+      ]);
+    }
+
+    // End swallow animation after a bit
+    setTimeout(() => setIsSwallowing(false), 800);
+  };
+
+  const handleOrbClick = () => {
+    fileInputRef.current?.click();
+  };
+
   const handleNavigate = (view: 'tasks' | 'profile') => {
     setCurrentView(view);
   };
@@ -495,7 +563,7 @@ export default function Index() {
       <header className="absolute top-0 left-0 right-0 z-10 p-6 flex items-center justify-between">
         <div className="flex items-center gap-4">
           <h1 className="text-lg font-medium tracking-wide text-foreground/90 text-mono">
-            JARVIS
+            MANAS
           </h1>
           <StatusIndicator state={orbState} />
         </div>
@@ -524,8 +592,23 @@ export default function Index() {
         <div className="relative flex items-center justify-center mb-16">
           <JarvisOrb
             state={orbState}
-            context={orbContext}
+            context={isAnalysisMode ? 'analyze' : orbContext}
             audioLevel={audioLevel}
+            isSwallowing={isSwallowing}
+            uploadedFilesCount={pendingFileIds.length}
+            onFileDrop={handleFilesUpload}
+            onClick={handleOrbClick}
+          />
+          <input
+            type="file"
+            ref={fileInputRef}
+            className="hidden"
+            multiple
+            onChange={(e) => {
+              if (e.target.files) {
+                handleFilesUpload(Array.from(e.target.files));
+              }
+            }}
           />
         </div>
 

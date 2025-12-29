@@ -143,8 +143,14 @@ async def google_gmail_callback(code: str | None = None, state: str | None = Non
             content="""
             <html>
                 <head>
-                    <title>Gmail Connected</title>
+                    <title>Link Established | Manas</title>
                     <style>
+                        :root {
+                            --primary: #22d3ee;
+                            --background: #02040a;
+                            --glass: rgba(255, 255, 255, 0.03);
+                            --border: rgba(255, 255, 255, 0.1);
+                        }
                         body {
                             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
                             display: flex;
@@ -152,42 +158,126 @@ async def google_gmail_callback(code: str | None = None, state: str | None = Non
                             align-items: center;
                             height: 100vh;
                             margin: 0;
-                            background: linear-gradient(135deg, #EA4335 0%, #FBBC05 50%, #34A853 100%);
+                            background-color: var(--background);
+                            color: white;
+                            overflow: hidden;
+                        }
+                        .ambient-glow {
+                            position: absolute;
+                            width: 600px;
+                            height: 600px;
+                            background: radial-gradient(circle, rgba(34, 211, 238, 0.1) 0%, transparent 70%);
+                            filter: blur(80px);
+                            border-radius: 50%;
+                            z-index: 1;
+                            animation: pulse 8s infinite ease-in-out;
+                        }
+                        @keyframes pulse {
+                            0%, 100% { transform: scale(1); opacity: 0.3; }
+                            50% { transform: scale(1.2); opacity: 0.6; }
                         }
                         .container {
-                            background: white;
-                            padding: 3rem;
-                            border-radius: 12px;
-                            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+                            position: relative;
+                            z-index: 10;
+                            background: var(--glass);
+                            backdrop-filter: blur(20px);
+                            padding: 3.5rem;
+                            border-radius: 2.5rem;
+                            border: 1px solid var(--border);
                             text-align: center;
-                            max-width: 500px;
+                            max-width: 440px;
+                            width: 100%;
+                            box-shadow: 0 0 100px rgba(34, 211, 238, 0.05);
+                            animation: slideUp 0.8s cubic-bezier(0.2, 0.8, 0.2, 1);
                         }
-                        h1 { color: #2d3748; margin-bottom: 1rem; }
-                        p { color: #718096; line-height: 1.6; }
-                        .success-icon { font-size: 4rem; margin-bottom: 1rem; }
-                        .close-btn {
-                            margin-top: 2rem;
-                            padding: 0.75rem 2rem;
-                            background: #EA4335;
+                        @keyframes slideUp {
+                            from { opacity: 0; transform: translateY(20px) scale(0.95); }
+                            to { opacity: 1; transform: translateY(0) scale(1); }
+                        }
+                        .branding {
+                            font-size: 1.5rem;
+                            font-weight: 200;
+                            letter-spacing: 0.5em;
+                            text-transform: uppercase;
+                            margin-bottom: 2rem;
                             color: white;
-                            border: none;
-                            border-radius: 6px;
-                            font-size: 1rem;
-                            cursor: pointer;
+                            opacity: 0.9;
                         }
-                        .close-btn:hover { background: #C5221F; }
+                        .branding span {
+                            display: block;
+                            font-size: 0.6rem;
+                            font-weight: 700;
+                            letter-spacing: 0.8em;
+                            color: var(--primary);
+                            margin-top: 0.5rem;
+                            opacity: 0.6;
+                        }
+                        .icon-wrap {
+                            position: relative;
+                            width: 80px;
+                            height: 80px;
+                            margin: 0 auto 2rem;
+                            display: flex;
+                            justify-content: center;
+                            align-items: center;
+                            background: rgba(34, 211, 238, 0.1);
+                            border-radius: 1.5rem;
+                            border: 1px solid rgba(34, 211, 238, 0.2);
+                        }
+                        .icon-wrap svg { color: var(--primary); }
+                        h1 { 
+                            font-size: 1.25rem; 
+                            font-weight: 500; 
+                            margin-bottom: 0.75rem; 
+                            letter-spacing: -0.02em;
+                        }
+                        p { 
+                            color: rgba(255, 255, 255, 0.5); 
+                            font-size: 0.875rem;
+                            line-height: 1.6; 
+                            margin-bottom: 2rem;
+                        }
+                        .close-btn {
+                            padding: 0.875rem 2.5rem;
+                            background: var(--primary);
+                            color: #02040a;
+                            border: none;
+                            border-radius: 1rem;
+                            font-size: 0.75rem;
+                            font-weight: 700;
+                            letter-spacing: 0.1em;
+                            text-transform: uppercase;
+                            cursor: pointer;
+                            transition: all 0.2s;
+                            box-shadow: 0 10px 20px rgba(34, 211, 238, 0.2);
+                        }
+                        .close-btn:hover { transform: scale(1.02); filter: brightness(1.1); }
+                        .footer {
+                            margin-top: 2.5rem;
+                            font-size: 0.6rem;
+                            font-weight: 700;
+                            letter-spacing: 0.3em;
+                            color: rgba(255, 255, 255, 0.15);
+                            text-transform: uppercase;
+                        }
                     </style>
                 </head>
                 <body>
+                    <div class="ambient-glow"></div>
                     <div class="container">
-                        <div class="success-icon">📧</div>
-                        <h1>Gmail Connected!</h1>
-                        <p>Your Gmail has been successfully connected to Jarvis.</p>
-                        <p>You can now ask about your emails and get summaries!</p>
-                        <button class="close-btn" onclick="window.close()">Close Window</button>
+                        <div class="branding">
+                            MANAS
+                            <span>Neural Link</span>
+                        </div>
+                        <div class="icon-wrap">
+                            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"></path><rect width="20" height="16" x="2" y="5" rx="2"></rect></svg>
+                        </div>
+                        <h1>Gmail Connected</h1>
+                        <p>Your communication stream has been successfully integrated. Manas is now ready to assist with your mail.</p>
+                        <button class="close-btn" onclick="window.close()">Secure and Close</button>
+                        <div class="footer">Link Established v2.5.0</div>
                     </div>
                     <script>
-                        // Auto-close after 3 seconds
                         setTimeout(() => window.close(), 3000);
                     </script>
                 </body>

@@ -2,7 +2,7 @@
 import asyncio
 import logging
 from functools import lru_cache
-from typing import Any, Dict, AsyncGenerator, Tuple, Optional, AsyncGenerator, Tuple, Optional
+from typing import Any, Dict, List, AsyncGenerator, Tuple, Optional
 from datetime import datetime, timedelta
 
 from app.services.gemini import get_gemini_service
@@ -10,6 +10,7 @@ from app.services.fitbit_tool import get_fitbit_tool
 from app.services.gmail_tool import get_gmail_tool
 from app.services.memory_service import get_memory_service
 from app.services.yelp_tool import get_yelp_tool
+from app.api.files import get_file_path, delete_file
 
 logger = logging.getLogger(__name__)
 
@@ -22,9 +23,10 @@ class OrchestratorService:
         self.gemini_service = get_gemini_service()
         self.user_profile_cache = {}  # Session-level profile cache
         self.conversation_history = {}  # user_id -> list of {"role": "user/model", "parts": "..."}
+        self.yelp_chat_ids = {}  # user_id -> last yelp chat_id for multi-turn
         logger.info("✓ Orchestrator service initialized")
 
-    async def process_transcript(self, transcript: str, user_id: str = "default") -> Dict[str, Any]:
+    async def process_transcript(self, transcript: str, user_id: str = "default", file_ids: List[str] = None) -> Dict[str, Any]:
         """
         Process transcript by classifying intent and routing to handler.
         
@@ -46,20 +48,33 @@ class OrchestratorService:
             # Step 2: Get conversation history
             history = self._get_conversation_history(user_id)
             
-            # Step 3: Classify Intent using fast Gemini Flash
-            intent_result = await self.gemini_service.classify_intent(transcript)
-            intent = intent_result["intent"]
-            confidence = intent_result["confidence"]
+            # Step 2.5: Resolve file_ids to paths
+            file_paths = []
+            if file_ids:
+                for fid in file_ids:
+                    path = get_file_path(fid)
+                    if path:
+                        file_paths.append(path)
+                logger.info(f"Resolved {len(file_paths)} file paths from {len(file_ids)} IDs")
             
-            logger.info(f"Orchestrator: Intent={intent}, Confidence={confidence}")
+            # Step 3: Classify Intent using fast Gemini Flash (with history context)
+            if file_paths:
+                # Priority: if files are present, force document analysis mode
+                intent = "DOC_ANALYSIS"
+                confidence = 1.0
+                logger.info(f"Orchestrator: Analysis Mode Triggered (Files present). Forcing intent={intent}")
+            else:
+                intent_result = await self.gemini_service.classify_intent(transcript, history=history)
+                intent = intent_result["intent"]
+                confidence = intent_result["confidence"]
+                logger.info(f"Orchestrator: Intent={intent}, Confidence={confidence}")
             
             # Step 4: Route to appropriate handler (extraction happens inside handlers)
-            handler_response = await self._route_to_handler(intent, transcript, confidence, profile, history, user_id)
+            handler_response = await self._route_to_handler(intent, transcript, confidence, profile, history, user_id, file_paths=file_paths)
             
-            # Step 5: Update conversation history for GENERAL_CHAT
-            if intent == "GENERAL_CHAT":
-                self._add_to_history(user_id, "user", transcript)
-                self._add_to_history(user_id, "model", handler_response["message"])
+            # Step 5: Update conversation history for all intents
+            self._add_to_history(user_id, "user", transcript)
+            self._add_to_history(user_id, "model", handler_response["message"])
             
             # Step 6: Extract and update profile (non-blocking)
             asyncio.create_task(self._extract_and_update_profile(transcript, user_id))
@@ -78,10 +93,16 @@ class OrchestratorService:
                 "transcript": transcript,
                 "intent": "GENERAL_CHAT",
                 "confidence": 0.0,
-                "handler_response": await self._handle_general_chat(transcript, profile=None, history=None),
+                "handler_response": await self._handle_general_chat(transcript, profile=None, history=None, file_paths=None),
             }
+        finally:
+            # Step 7: Auto-cleanup: Delete files after processing
+            if file_ids:
+                for f_id in file_ids:
+                    logger.info(f"🗑️ Deleting file {f_id} in process_transcript finally block")
+                    delete_file(f_id)
 
-    async def process_transcript_stream(self, transcript: str, user_id: str = "default"):
+    async def process_transcript_stream(self, transcript: str, user_id: str = "default", file_ids: List[str] = None):
         """
         Process transcript with streaming support for faster responses.
         
@@ -106,11 +127,24 @@ class OrchestratorService:
             
             # Step 2: Get conversation history
             history = self._get_conversation_history(user_id)
+
+            # Step 2.5: Resolve file_ids to paths
+            file_paths = []
+            if file_ids:
+                for fid in file_ids:
+                    path = get_file_path(fid)
+                    if path:
+                        file_paths.append(path)
+                logger.info(f"Resolved {len(file_paths)} file paths for streaming")
             
-            # Step 3: Classify Intent
-            intent_result = await self.gemini_service.classify_intent(transcript)
-            intent = intent_result["intent"]
-            confidence = intent_result["confidence"]
+            # Step 3: Classify Intent (with history context)
+            if file_paths:
+                intent = "DOC_ANALYSIS"
+                confidence = 1.0
+            else:
+                intent_result = await self.gemini_service.classify_intent(transcript, history=history)
+                intent = intent_result["intent"]
+                confidence = intent_result["confidence"]
             
             logger.info(f"Orchestrator Streaming: Intent={intent}, Confidence={confidence}")
             
@@ -129,8 +163,26 @@ class OrchestratorService:
                 # Collect response for history
                 full_response = ""
                 
-                # Stream with profile and history context
-                async for chunk in self.gemini_service.generate_response_stream(transcript, profile, history):
+                # Stream with profile and history context (and files)
+                async for chunk in self.gemini_service.generate_response_stream(transcript, profile, history, file_paths=file_paths):
+                    full_response += chunk
+                    yield chunk, intent, confidence
+                
+                # Add assistant response to history
+                self._add_to_history(user_id, "model", full_response)
+            elif intent == "DOC_ANALYSIS":
+                logger.info("Streaming from Gemini for DOC_ANALYSIS")
+                # Add user message to history
+                self._add_to_history(user_id, "user", transcript)
+                
+                # Collect response for history
+                full_response = ""
+                
+                # Prepend focus instruction
+                analysis_transcript = f"[SYSTEM: Focus exclusively on the provided document/image. Answer based ONLY on its content.] {transcript}"
+                
+                # Stream with focus context
+                async for chunk in self.gemini_service.generate_response_stream(analysis_transcript, profile, history, file_paths=file_paths):
                     full_response += chunk
                     yield chunk, intent, confidence
                 
@@ -138,16 +190,28 @@ class OrchestratorService:
                 self._add_to_history(user_id, "model", full_response)
             else:
                 # For structured intents: return immediate response
-                logger.info(f"Immediate response for {intent} (structured data)")
-                handler_response = await self._route_to_handler(intent, transcript, confidence, profile, history, user_id)
-                yield handler_response["message"], intent, confidence
-            
-            # Extract and update profile (non-blocking)
-            asyncio.create_task(self._extract_and_update_profile(transcript, user_id))
+                handler_response = await self._route_to_handler(intent, transcript, confidence, profile, history, user_id, file_paths=file_paths)
                 
+                # Add to history
+                self._add_to_history(user_id, "user", transcript)
+                self._add_to_history(user_id, "model", handler_response["message"])
+                
+                yield handler_response["message"], intent, confidence
+
         except Exception as e:
             logger.error(f"Orchestrator streaming error: {e}")
             # Fallback to generic response
+            yield "I'm sorry, I encountered an error. How else can I help?", "GENERAL_CHAT", 0.0
+        finally:
+            # Step 4: Auto-cleanup: Delete files after streaming/processing is complete
+            if file_ids:
+                for f_id in file_ids:
+                    logger.info(f"🗑️ Deleting file {f_id} in streaming finally block")
+                    delete_file(f_id)
+            
+            # Extract and update profile (non-blocking) - only if transcript successful
+            if transcript:
+                asyncio.create_task(self._extract_and_update_profile(transcript, user_id))
             yield "I'm having trouble processing that right now.", "GENERAL_CHAT", 0.0
 
     async def _get_user_profile(self, user_id: str) -> Dict[str, Any]:
@@ -253,7 +317,7 @@ class OrchestratorService:
         logger.debug(f"History updated for {user_id}: {len(self.conversation_history[user_id])} messages")
     
     async def _route_to_handler(
-        self, intent: str, transcript: str, confidence: float, profile: Dict[str, Any], history: list = None, user_id: str = "default"
+        self, intent: str, transcript: str, confidence: float, profile: Dict[str, Any], history: list = None, user_id: str = "default", file_paths: List[str] = None
     ) -> Dict[str, Any]:
         """
         Route to appropriate handler based on intent.
@@ -275,36 +339,38 @@ class OrchestratorService:
             logger.info(f"Low confidence ({confidence}), fallback to GENERAL_CHAT")
             intent = "GENERAL_CHAT"
         
-        # Handler mapping (note: GENERAL_CHAT needs special handling for history)
+        # Handler mapping
         handlers = {
-            "GET_WEATHER": lambda t: self._handle_get_weather(t, profile),
-            "ADD_TASK": lambda t: self._handle_add_task(t, user_id),
-            "COMPLETE_TASK": lambda t: self._handle_complete_task(t, user_id),
-            "UPDATE_TASK": lambda t: self._handle_update_task(t, user_id),
-            "DELETE_TASK": lambda t: self._handle_delete_task(t, user_id),
-            "LIST_TASKS": lambda t: self._handle_list_tasks(t, user_id),
-            "GET_TASK_REMINDERS": lambda t: self._handle_get_task_reminders(t, user_id),
-            "DAILY_SUMMARY": lambda t: self._handle_daily_summary(t, user_id),
-            "CREATE_CALENDAR_EVENT": lambda t: self._handle_create_calendar_event(t, user_id),
-            "UPDATE_CALENDAR_EVENT": lambda t: self._handle_update_calendar_event(t, user_id),
-            "DELETE_CALENDAR_EVENT": lambda t: self._handle_delete_calendar_event(t, user_id),
-            "CHECK_EMAIL": lambda t: self._handle_check_email(t, user_id),
-            "SEARCH_EMAIL": lambda t: self._handle_search_email(t, user_id),
-            "ANALYZE_EMAIL": lambda t: self._handle_analyze_email(t, user_id),
-            "SEARCH_RESTAURANTS": lambda t: self._handle_search_restaurants(t, user_id, profile),
-            "REMEMBER_THIS": lambda t: self._handle_remember_this(t, user_id),
-            "RECALL_MEMORY": lambda t: self._handle_recall_memory(t, user_id),
-            "FORGET_THIS": lambda t: self._handle_forget_this(t, user_id),
-            "LEARN": self._handle_learn,
-            "GET_NEWS": self._handle_news,
+            "GET_WEATHER": lambda t: self._handle_get_weather(t, profile, history),
+            "ADD_TASK": lambda t: self._handle_add_task(t, user_id, history),
+            "COMPLETE_TASK": lambda t: self._handle_complete_task(t, user_id, history),
+            "UPDATE_TASK": lambda t: self._handle_update_task(t, user_id, history),
+            "DELETE_TASK": lambda t: self._handle_delete_task(t, user_id, history),
+            "LIST_TASKS": lambda t: self._handle_list_tasks(t, user_id, history),
+            "GET_TASK_REMINDERS": lambda t: self._handle_get_task_reminders(t, user_id, history),
+            "DAILY_SUMMARY": lambda t: self._handle_daily_summary(t, user_id, history),
+            "CREATE_CALENDAR_EVENT": lambda t: self._handle_create_calendar_event(t, user_id, history),
+            "UPDATE_CALENDAR_EVENT": lambda t: self._handle_update_calendar_event(t, user_id, history),
+            "DELETE_CALENDAR_EVENT": lambda t: self._handle_delete_calendar_event(t, user_id, history),
+            "CHECK_EMAIL": lambda t: self._handle_check_email(t, user_id, history),
+            "SEARCH_EMAIL": lambda t: self._handle_search_email(t, user_id, history),
+            "READ_EMAIL": lambda t: self._handle_read_email(t, user_id, history),
+            "ANALYZE_EMAIL": lambda t: self._handle_analyze_email(t, user_id, history),
+            "SEARCH_RESTAURANTS": lambda t: self._handle_search_restaurants(t, user_id, profile, history),
+            "REMEMBER_THIS": lambda t: self._handle_remember_this(t, user_id, history),
+            "RECALL_MEMORY": lambda t: self._handle_recall_memory(t, user_id, history),
+            "FORGET_THIS": lambda t: self._handle_forget_this(t, user_id, history),
+            "LEARN": lambda t: self._handle_learn(t, history, file_paths=file_paths),
+            "GET_NEWS": lambda t: self._handle_news(t, history),
+            "DOC_ANALYSIS": lambda t: self._handle_doc_analysis(t, profile, history, user_id, file_paths)
         }
         
         # Handle GENERAL_CHAT specially to pass history and user_id for memory context
         if intent == "GENERAL_CHAT":
-            handler_response = await self._handle_general_chat(transcript, profile, history, user_id)
+            handler_response = await self._handle_general_chat(transcript, profile, history, user_id, file_paths=file_paths)
         else:
             # Get handler or default to general chat
-            handler = handlers.get(intent, lambda t: self._handle_general_chat(t, profile, history, user_id))
+            handler = handlers.get(intent, lambda t: self._handle_general_chat(t, profile, history, user_id, file_paths=file_paths))
             handler_response = await handler(transcript)
         
         # Beautify the message for natural speech (skip for GENERAL_CHAT as it's already natural)
@@ -444,7 +510,7 @@ Natural:"""
             return raw_message
 
 
-    async def _handle_get_weather(self, transcript: str, profile: Dict[str, Any] = None) -> Dict[str, Any]:
+    async def _handle_get_weather(self, transcript: str, profile: Dict[str, Any] = None, history: list = None) -> Dict[str, Any]:
         """
         Handle weather requests using Gemini with Google Search grounding.
         Includes 15-minute caching for performance.
@@ -454,8 +520,8 @@ Natural:"""
         try:
             from app.services.weather_tool import get_weather_tool
             
-            # Extract location from transcript (simple keyword detection)
-            location = self._extract_location(transcript)
+            # Extract location from transcript (Gemini-based with context awareness)
+            location = self._extract_location(transcript, history)
             
             # Get profile location if available
             profile_location = profile.get('location') if profile else None
@@ -498,12 +564,23 @@ Natural:"""
                 "message": "I'm having trouble getting the weather right now. Please try again."
             }
     
-    def _extract_location(self, transcript: str) -> Optional[str]:
+    def _extract_location(self, transcript: str, history: list = None) -> Optional[str]:
         """Extract location from weather query using Gemini for reliable extraction."""
         try:
+            # Build conversation history context
+            history_context = ""
+            if history and len(history) > 0:
+                history_lines = []
+                for msg in history[-4:]:
+                    role = "User" if msg.get("role") == "user" else "Manas"
+                    content = msg.get("parts", "")
+                    history_lines.append(f"{role}: {content}")
+                history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"
+
             # Use Gemini to extract location from any weather query format
-            prompt = f"""Extract ONLY the city/location name from this weather query. Return just the city name, nothing else.
-If no location is mentioned, return "null".
+            prompt = f"""{history_context}Extract ONLY the city/location name from this weather query. Return just the city name, nothing else.
+If no location is mentioned directly, use the history above to resolve pronouns or implied locations (e.g., "how about there?").
+If no location is mentioned or implied, return "null".
 
 Examples:
 - "how is dallas weather today?" → "Dallas"
@@ -552,19 +629,9 @@ Location:"""
             
             return None
 
-    async def _handle_add_task(self, transcript: str, user_id: str = "default") -> Dict[str, Any]:
+    async def _handle_add_task(self, transcript: str, user_id: str = "default", history: list = None) -> Dict[str, Any]:
         """
         Handle task creation requests with priority and due date extraction.
-        
-        Uses Gemini to extract:
-        - Task title (clean, without trigger words)
-        - Priority (high/medium/low or null)
-        - Due date (natural language → ISO date)
-        
-        Examples:
-        - "Add buy groceries" → title="buy groceries", priority=null, due_date=null
-        - "Add high priority task finish presentation" → title="finish presentation", priority="high"
-        - "Add call dentist by Friday" → title="call dentist", due_date="2025-12-27"
         """
         logger.info("Handler: ADD_TASK")
         
@@ -576,8 +643,19 @@ Location:"""
             now = datetime.now().astimezone()
             current_date = now.strftime("%Y-%m-%d (%A)")
             
+            # Build conversation history context
+            history_context = ""
+            if history and len(history) > 0:
+                history_lines = []
+                for msg in history[-4:]:
+                    role = "User" if msg.get("role") == "user" else "Manas"
+                    content = msg.get("parts", "")
+                    history_lines.append(f"{role}: {content}")
+                history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"
+            
             # Use Gemini to extract title, priority, and due date
-            prompt = f"""Extract task details. Return JSON only.
+            prompt = f"""{history_context}Extract task details. Return JSON only.
+Use the history to resolve pronouns if the user says something like "add that to my list".
 
 Current date: {current_date}
 
@@ -670,7 +748,7 @@ Examples:
             }
 
 
-    async def _handle_complete_task(self, transcript: str, user_id: str = "default") -> Dict[str, Any]:
+    async def _handle_complete_task(self, transcript: str, user_id: str = "default", history: list = None) -> Dict[str, Any]:
         """
         Mark task as completed.
         
@@ -688,8 +766,8 @@ Examples:
             from app.services.task_tool import get_task_tool
             from app.services.gemini_task_extraction import extract_task_completion
             
-            # Step 1: Extract task name (~150ms)
-            extracted = await extract_task_completion(self.gemini_service.model, transcript)
+            # Step 1: Extract task name (~150ms, context-aware)
+            extracted = await extract_task_completion(self.gemini_service.model, transcript, history)
             task_name = extracted.get("task_name", "")
             
             if not task_name:
@@ -736,12 +814,12 @@ Examples:
                 "data": {"error": str(e)},
                 "message": "I had trouble completing that task."
             }
-    async def _handle_update_task(self, transcript: str, user_id: str = "default") -> Dict[str, Any]:
+    async def _handle_update_task(self, transcript: str, user_id: str = "default", history: list = None) -> Dict[str, Any]:
         """
         Update task fields (priority, title, status).
         
         Strategy:
-        1. Extract task name and updates (LLM)
+        1. Extract task name and updates (LLM, context-aware)
         2. List all tasks
         3. Fuzzy match to find task
         4. Update task
@@ -754,8 +832,8 @@ Examples:
             from app.services.task_tool import get_task_tool
             from app.services.gemini_task_extraction import extract_task_update
             
-            # Step 1: Extract details (~200ms)
-            extracted = await extract_task_update(self.gemini_service.model, transcript)
+            # Step 1: Extract details (~200ms, context-aware)
+            extracted = await extract_task_update(self.gemini_service.model, transcript, history)
             
             task_name = extracted.get("task_name", "")
             priority = extracted.get("priority")
@@ -827,12 +905,12 @@ Examples:
                 "data": {"error": str(e)},
                 "message": "I had trouble updating that task."
             }
-    async def _handle_delete_task(self, transcript: str, user_id: str = "default") -> Dict[str, Any]:
+    async def _handle_delete_task(self, transcript: str, user_id: str = "default", history: list = None) -> Dict[str, Any]:
         """
         Delete task permanently.
         
         Strategy:
-        1. Extract task name (LLM)
+        1. Extract task name (LLM, context-aware)
         2. List all tasks (pending + completed)
         3. Fuzzy match to find task
         4. Delete task
@@ -845,8 +923,8 @@ Examples:
             from app.services.task_tool import get_task_tool
             from app.services.gemini_task_extraction import extract_task_deletion
             
-            # Step 1: Extract task name (~150ms)
-            extracted = await extract_task_deletion(self.gemini_service.model, transcript)
+            # Step 1: Extract task name (~150ms, context-aware)
+            extracted = await extract_task_deletion(self.gemini_service.model, transcript, history)
             task_name = extracted.get("task_name", "")
             
             if not task_name:
@@ -902,7 +980,7 @@ Examples:
                 "message": "I had trouble deleting that task."
             }
 
-    async def _handle_list_tasks(self, transcript: str, user_id: str = "default") -> Dict[str, Any]:
+    async def _handle_list_tasks(self, transcript: str, user_id: str = "default", history: list = None) -> Dict[str, Any]:
         """List all pending tasks with optional priority filtering."""
         logger.info("Handler: LIST_TASKS")
         
@@ -978,7 +1056,7 @@ Examples:
             }
 
 
-    async def _handle_get_task_reminders(self, transcript: str, user_id: str = "default") -> Dict[str, Any]:
+    async def _handle_get_task_reminders(self, transcript: str, user_id: str = "default", history: list = None) -> Dict[str, Any]:
         """Compile and prioritize task reminders."""
         logger.info("Handler: GET_TASK_REMINDERS")
         
@@ -1080,7 +1158,7 @@ Examples:
                 "message": "I had trouble getting your reminders."
             }
 
-    async def _handle_daily_summary(self, transcript: str, user_id: str = "default") -> Dict[str, Any]:
+    async def _handle_daily_summary(self, transcript: str, user_id: str = "default", history: list = None) -> Dict[str, Any]:
         """
         Handle daily summary requests with real calendar data.
         Supports date references like "today", "tomorrow", "next Monday".
@@ -1100,8 +1178,31 @@ Examples:
             
             calendar_tool = get_calendar_tool(user_id=user_id)
             
-            # Parse date range from transcript
-            start_date, end_date = self._parse_date_range(transcript)
+            # Parse date range from transcript (context-aware)
+            resolved_transcript = transcript
+            date_keywords = ["today", "tomorrow", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "yesterday", "next", "last"]
+            
+            if history and not any(kw in transcript.lower() for kw in date_keywords):
+                history_context = ""
+                history_lines = []
+                for msg in history[-4:]:
+                    role = "User" if msg.get("role") == "user" else "Manas"
+                    content = msg.get("parts", "")
+                    history_lines.append(f"{role}: {content}")
+                history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"
+                
+                resolution_prompt = f"""{history_context}Resolve the date or time reference in this request.
+If the user says "tell me more" or "what about then?", use history to find the date they were just talking about.
+Original Request: "{transcript}"
+Resolved Request (include the date mentioned in history):"""
+                try:
+                    resp = self.gemini_service.model.generate_content(resolution_prompt)
+                    resolved_transcript = resp.text.strip().strip('"')
+                    logger.info(f"📅 Resolved summary date: '{transcript}' -> '{resolved_transcript}'")
+                except Exception as ex:
+                    logger.warning(f"Failed to resolve summary date: {ex}")
+
+            start_date, end_date = self._parse_date_range(resolved_transcript)
             
             # Check if authorized first
             if not calendar_tool.service:
@@ -1557,7 +1658,7 @@ Examples:
                 "message": "I had trouble deleting that event. Please try again."
             }
 
-    async def _handle_learn(self, transcript: str) -> Dict[str, Any]:
+    async def _handle_learn(self, transcript: str, history: list = None, file_paths: List[str] = None) -> Dict[str, Any]:
         """
         Handle educational queries using Google Search grounding.
         
@@ -1578,8 +1679,8 @@ Examples:
             # Get user's learning level from profile if available (future enhancement)
             learning_level = None
             
-            # Answer question with search grounding
-            result = await learning_tool.answer_question(transcript, learning_level)
+            # Answer question with search grounding (context-aware) and files
+            result = await learning_tool.answer_question(transcript, learning_level, history, file_paths=file_paths)
             
             # Handle errors
             if "error" in result:
@@ -1613,7 +1714,7 @@ Examples:
                 "data": {"error": str(e)},
                 "message": "I'm having trouble finding information on that right now.",
             }
-    async def _handle_news(self, transcript: str) -> Dict[str, Any]:
+    async def _handle_news(self, transcript: str, history: list = None) -> Dict[str, Any]:
         """
         Handle news requests using NewsAPI.org.
         """
@@ -1622,16 +1723,22 @@ Examples:
         try:
             from app.services.news_tool import get_news_tool
             
-            # Extract news query using Gemini for cleaner results
-            prompt = f"""Extract the news topic or search query from this text. 
+            # Extract news topic using Gemini (context-aware)
+            history_context = ""
+            if history and len(history) > 0:
+                history_lines = []
+                for msg in history[-4:]:
+                    role = "User" if msg.get("role") == "user" else "Manas"
+                    content = msg.get("parts", "")
+                    history_lines.append(f"{role}: {content}")
+                history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"
+
+            prompt = f"""{history_context}Extract the news topic or search query from this text. 
 Return ONLY the topic. If it's a general request like "latest news", return "top headlines".
+If the user says "more news" or "anything else?", use the history to find the previous topic.
+Use history to resolve pronouns like "that" or "them".
 
-Examples:
-- "what's the latest news on tech?" → "technology"
-- "any news about apple?" → "Apple"
-- "give me the daily briefing" → "top headlines"
-
-Query: "{transcript}"
+Request: "{transcript}"
 
 Topic:"""
 
@@ -1666,7 +1773,7 @@ Topic:"""
                 "message": "I'm having trouble getting the news right now."
             }
 
-    async def _handle_check_email(self, transcript: str, user_id: str = "default") -> Dict[str, Any]:
+    async def _handle_check_email(self, transcript: str, user_id: str = "default", history: list = None) -> Dict[str, Any]:
         """
         Handle email check requests - get unread count and recent emails.
         Extracts parameters from user request like "last 5 emails", "unread emails", etc.
@@ -1692,9 +1799,19 @@ Topic:"""
                     "message": "I don't have access to your Gmail yet. You can connect it in the Profile settings!"
                 }
             
-            # Extract email parameters from user's request using Gemini
+            # Extract email parameters from user's request using Gemini (context-aware)
             import json
-            prompt = f"""Extract email query parameters from this request. Return JSON only.
+            history_context = ""
+            if history and len(history) > 0:
+                history_lines = []
+                for msg in history[-4:]:
+                    role = "User" if msg.get("role") == "user" else "Manas"
+                    content = msg.get("parts", "")
+                    history_lines.append(f"{role}: {content}")
+                history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"
+
+            prompt = f"""{history_context}Extract email query parameters from this request. Return JSON only.
+Use the conversation history to resolve pronouns like "those" or "them" (e.g., "summarize them").
 
 Request: "{transcript}"
 
@@ -1803,7 +1920,7 @@ JSON:"""
                 "message": "I'm having trouble checking your emails right now."
             }
 
-    async def _handle_search_email(self, transcript: str, user_id: str = "default") -> Dict[str, Any]:
+    async def _handle_search_email(self, transcript: str, user_id: str = "default", history: list = None) -> Dict[str, Any]:
         """
         Handle email search requests - find specific emails.
         
@@ -1828,9 +1945,20 @@ JSON:"""
                     "message": "I don't have access to your Gmail yet. You can connect it in the Profile settings!"
                 }
             
-            # Extract search query using Gemini
-            prompt = f"""Extract the Gmail search query from this request. 
+            # Extract search query using Gemini (context-aware)
+            history_context = ""
+            if history and len(history) > 0:
+                history_lines = []
+                for msg in history[-4:]:
+                    role = "User" if msg.get("role") == "user" else "Manas"
+                    content = msg.get("parts", "")
+                    history_lines.append(f"{role}: {content}")
+                history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"
+
+            prompt = f"""{history_context}Extract the Gmail search query from this request. 
 Return ONLY the Gmail search syntax. Use Gmail operators: from:, subject:, to:, is:unread, newer_than:, older_than:
+
+Use history to resolve pronouns like "from him" or "about that".
 
 IMPORTANT: 
 - For "from" queries, use the exact name: "from John" → "from:John"
@@ -1908,7 +2036,7 @@ Gmail query:"""
                 "message": "I'm having trouble searching your emails right now."
             }
 
-    async def _handle_analyze_email(self, transcript: str, user_id: str = "default") -> Dict[str, Any]:
+    async def _handle_analyze_email(self, transcript: str, user_id: str = "default", history: list = None) -> Dict[str, Any]:
         """
         Handle email content analysis requests - read bodies and analyze with LLM.
         
@@ -1972,8 +2100,18 @@ Gmail query:"""
                 email_digest += f"Date: {e['date']}\n"
                 email_digest += f"Content: {e['body']}\n"
             
-            # Send to LLM for analysis
-            prompt = f"""You are Jarvis, analyzing the user's emails to answer their question.
+            # Send to LLM for analysis (context-aware analysis)
+            history_context = ""
+            if history and len(history) > 0:
+                history_lines = []
+                for msg in history[-4:]:
+                    role = "User" if msg.get("role") == "user" else "Manas"
+                    content = msg.get("parts", "")
+                    history_lines.append(f"{role}: {content}")
+                history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"
+
+            prompt = f"""{history_context}You are Manas, analyzing the user's emails to answer their question.
+Use history if the user's question refers to previous turns.
 
 User's question: "{transcript}"
 
@@ -2008,11 +2146,149 @@ Keep response under 3 sentences unless they asked for a detailed summary."""
                 "message": "I'm having trouble analyzing your emails right now."
             }
 
+    async def _handle_read_email(self, transcript: str, user_id: str = "default", history: list = None) -> Dict[str, Any]:
+        """
+        Handle requests to read a specific email thread.
+        """
+        logger.info(f"Handler: READ_EMAIL for user {user_id}")
+        
+        try:
+            gmail_tool = get_gmail_tool(user_id=user_id)
+            if not gmail_tool.service:
+                return {
+                    "type": "email_thread",
+                    "data": {"error": "not_authorized"},
+                    "message": "I don't have access to your Gmail yet."
+                }
+
+            # Use Gemini to resolve WHICH email to read based on transcript and history
+            history_context = ""
+            if history:
+                history_lines = []
+                for msg in history[-6:]:
+                    role = "User" if msg.get("role") == "user" else "Manas"
+                    content = msg.get("parts", "")
+                    history_lines.append(f"{role}: {content}")
+                history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"
+
+            prompt = f"""{history_context}The user wants to read a specific email. 
+Identify the target email from the conversation history. 
+Look for things like "the first one", "the one from Sarah", "that flight email".
+
+Extract:
+- thread_id: the thread ID of the target email (if available in history)
+- message_id: the message ID (if available)
+- sender_name: name of the sender mentioned
+- subject_hint: some words from the subject
+
+Return ONLY JSON.
+{{ "thread_id": "...", "message_id": "...", "sender_hint": "...", "subject_hint": "..." }}
+
+Request: "{transcript}"
+JSON:"""
+
+            response = self.gemini_service.model.generate_content(
+                prompt,
+                generation_config={"temperature": 0.0, "max_output_tokens": 150}
+            )
+            
+            import json
+            res_text = response.text.strip()
+            if "```json" in res_text:
+                res_text = res_text.split("```json")[1].split("```")[0].strip()
+            
+            resolve_data = json.loads(res_text)
+            thread_id = resolve_data.get("thread_id")
+            message_id = resolve_data.get("message_id")
+            
+            # If we don't have a direct ID, search for it
+            if not thread_id and not message_id:
+                search_query = ""
+                if resolve_data.get("sender_hint"):
+                    search_query += f"from:{resolve_data['sender_hint']} "
+                if resolve_data.get("subject_hint"):
+                    search_query += f"subject:{resolve_data['subject_hint']} "
+                
+                if not search_query:
+                    search_query = transcript
+                
+                logger.info(f"🔍 READ_EMAIL: Searching for target email with query: '{search_query}'")
+                search_results = gmail_tool.search_emails(f"category:primary {search_query}", max_results=1)
+                
+                if search_results:
+                    message_id = search_results[0]['id']
+                    # We'll fetch the full details below to get threadId
+            
+            if not message_id and not thread_id:
+                return {
+                    "type": "email_thread",
+                    "data": {"error": "not_found"},
+                    "message": "I couldn't figure out which email you'd like me to read. Could you be more specific?"
+                }
+
+            # Fetch thread details
+            if not thread_id and message_id:
+                details = gmail_tool.get_email_details(message_id)
+                thread_id = details.get("threadId")
+
+            if thread_id:
+                messages = gmail_tool.get_thread_messages(thread_id)
+                if messages:
+                    # Get shared subject from last message headers if needed
+                    first_msg = gmail_tool.get_email_details(messages[0]['id'])
+                    subject = first_msg.get('subject', 'No Subject')
+                    
+                    return {
+                        "type": "email_thread",
+                        "data": {
+                            "thread_id": thread_id,
+                            "subject": subject,
+                            "messages": messages,
+                            "count": len(messages)
+                        },
+                        "message": f"I've opened the thread '{subject}'. It has {len(messages)} message{'s' if len(messages) != 1 else ''}."
+                    }
+            
+            # Fallback to single message
+            if message_id:
+                details = gmail_tool.get_email_details(message_id)
+                return {
+                    "type": "email_thread",
+                    "data": {
+                        "thread_id": details.get("threadId"),
+                        "subject": details.get('subject'),
+                        "messages": [{
+                            "id": message_id,
+                            "from": details.get('from'),
+                            "date": details.get('date'),
+                            "body": details.get('body'),
+                            "snippet": details.get('snippet')
+                        }],
+                        "count": 1
+                    },
+                    "message": f"Here is the email from {details.get('from')}."
+                }
+
+            return {
+                "type": "email_thread",
+                "data": {"error": "failed_retrieval"},
+                "message": "I had trouble loading that email. Please try again."
+            }
+
+        except Exception as e:
+            logger.error(f"Read email handler failed: {e}")
+            return {
+                "type": "email_thread",
+                "data": {"error": str(e)},
+                "message": "I'm having trouble opening that email right now."
+            }
+
     async def _handle_search_restaurants(
         self, 
         transcript: str, 
         user_id: str = "default",
-        profile: Dict[str, Any] = None
+        profile: Dict[str, Any] = None,
+        history: list = None
     ) -> Dict[str, Any]:
         """
         Handle restaurant search requests using Yelp AI API.
@@ -2075,9 +2351,46 @@ Keep response under 3 sentences unless they asked for a detailed summary."""
                 except Exception as e:
                     logger.warning(f"Could not get memories: {e}")
             
+            # Resolve transcript if it has pronouns and history is available
+            resolved_transcript = transcript
+            if history and any(kw in transcript.lower() for kw in ["there", "it", "that", "those", "here"]):
+                history_context = ""
+                history_lines = []
+                for msg in history[-4:]:
+                    role = "User" if msg.get("role") == "user" else "Manas"
+                    content = msg.get("parts", "")
+                    history_lines.append(f"{role}: {content}")
+                history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"
+                
+                resolution_prompt = f"""{history_context}Resolve the location or cuisine in this restaurant search request.
+Use history to resolve pronouns like "there", "it", "that".
+Original Request: "{transcript}"
+Resolved Request (short and factual):"""
+                try:
+                    resp = self.gemini_service.model.generate_content(resolution_prompt)
+                    resolved_transcript = resp.text.strip().strip('"')
+                    logger.info(f"🍽️ Resolved restaurant query: '{transcript}' -> '{resolved_transcript}'")
+                except Exception as ex:
+                    logger.warning(f"Failed to resolve restaurant query: {ex}")
+
             # Enhance query with location and preferences
-            query = transcript
+            query = resolved_transcript
             needs_location = any(kw in transcript.lower() for kw in ["near me", "nearest", "nearby", "around me", "close to me"])
+            
+            # If no location from profile/memory and needs location, try IP geolocation
+            if not location_context and needs_location and latitude is None:
+                try:
+                    import httpx
+                    async with httpx.AsyncClient(timeout=3.0) as client:
+                        response = await client.get("http://ip-api.com/json")
+                        ip_data = response.json()
+                        if ip_data.get('status') == 'success':
+                            latitude = ip_data.get('lat')
+                            longitude = ip_data.get('lon')
+                            location_context = f"{ip_data.get('city')}, {ip_data.get('regionName')}"
+                            logger.info(f"📍 Auto-detected location for Yelp: {location_context} ({latitude}, {longitude})")
+                except Exception as e:
+                    logger.warning(f"IP-based location detection failed for Yelp: {e}")
             if location_context and needs_location:
                 # Append location context to query
                 query = f"{transcript} in {location_context}"
@@ -2089,11 +2402,17 @@ Keep response under 3 sentences unless they asked for a detailed summary."""
                 logger.info(f"🍽️ Enhanced query with preference: {query}")
             
             # Search using Yelp AI
+            chat_id = self.yelp_chat_ids.get(user_id)
             response = await yelp_tool.search_restaurants(
                 query=query,
                 latitude=latitude,
-                longitude=longitude
+                longitude=longitude,
+                chat_id=chat_id
             )
+            
+            # Store chat_id for multi-turn conversational support
+            if response.chat_id:
+                self.yelp_chat_ids[user_id] = response.chat_id
             
             # Format businesses for response
             businesses_data = []
@@ -2108,7 +2427,9 @@ Keep response under 3 sentences unless they asked for a detailed summary."""
                     "image_url": biz.image_url,
                     "tags": biz.tags,
                     "url": biz.url,
-                    "phone": biz.phone
+                    "phone": biz.phone,
+                    "address": ", ".join(biz.location.get("display_address", [])) if biz.location else None,
+                    "categories": biz.categories
                 })
             
             # Build user-friendly message
@@ -2141,32 +2462,32 @@ Keep response under 3 sentences unless they asked for a detailed summary."""
                 "message": "I'm having trouble searching for restaurants right now. Please try again."
             }
 
-    async def _handle_remember_this(self, transcript: str, user_id: str = "default") -> Dict[str, Any]:
+    async def _handle_remember_this(self, transcript: str, user_id: str = "default", history: list = None) -> Dict[str, Any]:
         """
         Handle requests to remember facts/preferences.
-        
-        Args:
-            transcript: User's request (e.g., "remember that my wife's birthday is March 15")
-            user_id: User identifier for data isolation
-            
-        Returns:
-            Confirmation of stored memory
         """
         logger.info(f"Handler: REMEMBER_THIS for user {user_id}")
         
         try:
             memory_service = get_memory_service()
             
+            # Resolve history context
+            history_context = ""
+            if history:
+                history_lines = []
+                for msg in history[-4:]:
+                    role = "User" if msg.get("role") == "user" else "Manas"
+                    content = msg.get("parts", "")
+                    history_lines.append(f"{role}: {content}")
+                history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"
+
             # Extract what to remember using Gemini
-            prompt = f"""Extract the fact or information the user wants to remember.
+            prompt = f"""{history_context}Extract the fact or information the user wants to remember.
+If the user says "remember this" or "save that", use the history to find the important information they just mentioned.
 Return ONLY the fact as a clear, concise statement from the user's perspective.
 
 Examples:
-"Remember that my wife's birthday is March 15" → "Wife's birthday is March 15"
-"Don't forget I'm allergic to peanuts" → "Allergic to peanuts"
-"Remember my mom's name is Linda" → "Mom's name is Linda"
-"Keep in mind I prefer morning meetings" → "Prefers morning meetings"
-"Remember I have a second wife named Sarah" → "Second wife's name is Sarah"
+"Remember I have a second wife named Sarah" -> "Second wife's name is Sarah"
 
 User request: "{transcript}"
 
@@ -2215,7 +2536,7 @@ Fact to remember:"""
                 "message": "I'm having trouble with my memory right now."
             }
 
-    async def _handle_recall_memory(self, transcript: str, user_id: str = "default") -> Dict[str, Any]:
+    async def _handle_recall_memory(self, transcript: str, user_id: str = "default", history: list = None) -> Dict[str, Any]:
         """
         Handle requests to recall stored memories.
         
@@ -2244,8 +2565,33 @@ Fact to remember:"""
                 # Get all memories
                 memories = memory_service.get_all_memories(user_id)
             else:
-                # Search for relevant memories - limit to top 2 for specific queries
-                memories = memory_service.search_memories(user_id, transcript, limit=10)
+                # Search for relevant memories (Gemini-based parameter extraction recommended in future)
+                search_query = transcript
+                
+                # If transcript is very short and we have history, try to resolve pronouns
+                if len(transcript.split()) < 4 and history:
+                    # Quick prompt to resolve pronoun for memory search
+                    # (This is an inline extraction for now)
+                    history_context = ""
+                    history_lines = []
+                    for msg in history[-4:]:
+                        role = "User" if msg.get("role") == "user" else "Manas"
+                        content = msg.get("parts", "")
+                        history_lines.append(f"{role}: {content}")
+                    history_context = "Conversation History:\n" + "\n".join(history_lines) + "\n\n"
+                    
+                    prompt = f"""{history_context}Resolve the subject of this memory query. 
+Use the history to resolve pronouns like "that", "it", or "him".
+Query: "{transcript}"
+Resolved Subject (short):"""
+                    try:
+                        resp = self.gemini_service.model.generate_content(prompt)
+                        search_query = resp.text.strip()
+                        logger.info(f"🧠 Resolved memory search: '{transcript}' -> '{search_query}'")
+                    except:
+                        pass
+
+                memories = memory_service.search_memories(user_id, search_query, limit=10)
             
             if not memories:
                 return {
@@ -2302,7 +2648,7 @@ Fact to remember:"""
                 "message": "I'm having trouble accessing my memory right now."
             }
 
-    async def _handle_forget_this(self, transcript: str, user_id: str = "default") -> Dict[str, Any]:
+    async def _handle_forget_this(self, transcript: str, user_id: str = "default", history: list = None) -> Dict[str, Any]:
         """
         Handle requests to delete specific memories.
         
@@ -2388,7 +2734,7 @@ Fact to remember:"""
                 "message": "I'm having trouble with my memory right now."
             }
 
-    async def _handle_general_chat(self, transcript: str, profile: Dict[str, Any] = None, history: list = None, user_id: str = None) -> Dict[str, Any]:
+    async def _handle_general_chat(self, transcript: str, profile: Dict[str, Any] = None, history: list = None, user_id: str = None, file_paths: List[str] = None) -> Dict[str, Any]:
         """
         Handle general conversation using Gemini AI with memory context.
         
@@ -2425,12 +2771,13 @@ Fact to remember:"""
                 except Exception as e:
                     logger.warning(f"Failed to get memories for context: {e}")
             
-            # Generate conversational response with profile, history, and memory context
+            # Generate conversational response with profile, history, memory context, and files
             response = await self.gemini_service.generate_response(
                 transcript, 
                 profile, 
                 history,
-                memory_context=memory_context
+                memory_context=memory_context,
+                file_paths=file_paths
             )
             
             return {
@@ -2450,6 +2797,14 @@ Fact to remember:"""
                 "message": "I'm having trouble thinking right now. Can you try again?",
             }
 
+    async def _handle_doc_analysis(self, transcript: str, profile: Dict[str, Any] = None, history: list = None, user_id: str = None, file_paths: List[str] = None) -> Dict[str, Any]:
+        """Specific handler for document/image analysis to ensure focus."""
+        logger.info("Handler: DOC_ANALYSIS")
+        
+        # Prepend instruction for focus
+        focused_transcript = f"[SYSTEM: Analyze the provided document/image. Answer the user based ONLY on the content of the file(s).] {transcript}"
+        
+        return await self._handle_general_chat(focused_transcript, profile, history, user_id, file_paths)
 
 @lru_cache
 def get_orchestrator() -> OrchestratorService:
