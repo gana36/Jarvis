@@ -8,6 +8,7 @@ import { StatusIndicator } from '@/components/StatusIndicator';
 import { SettingsPanel } from '@/components/SettingsPanel';
 import { TasksView } from '@/components/TasksView';
 import { ProfileView } from '@/components/ProfileView';
+import { VisualRenderPanel } from '@/components/VisualRenderPanel';
 import { voiceAPI, chatAPI, profileAPI, filesAPI } from '@/services/api';
 
 interface Card {
@@ -38,6 +39,8 @@ export default function Index() {
   const [pendingFileIds, setPendingFileIds] = useState<string[]>([]);
   const [isSwallowing, setIsSwallowing] = useState(false);
   const [isAnalysisMode, setIsAnalysisMode] = useState(false);
+  const [visualPayload, setVisualPayload] = useState<string | null>(null);
+  const [isVisualPanelOpen, setIsVisualPanelOpen] = useState(false);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -177,6 +180,7 @@ export default function Index() {
     clearCards(true);
     setOrbState('thinking');
     setShowUnderstanding(false);
+    setIsVisualPanelOpen(false); // Close existing panel when start thinking
 
     // Clear pending files and exit analysis mode immediately for better UX
     const filesToUpload = [...pendingFileIds];
@@ -267,6 +271,12 @@ export default function Index() {
           });
           setCitationCards(citations);
         }
+
+        // Handle Visual Render
+        if (result.data?.visual_payload) {
+          setVisualPayload(result.data.visual_payload);
+          setIsVisualPanelOpen(true);
+        }
       }
 
       setOrbState('speaking');
@@ -333,6 +343,7 @@ export default function Index() {
     setOrbState('thinking');
     setCurrentTranscript(trimmed);
     setTextInput('');
+    setIsVisualPanelOpen(false); // Close existing panel
 
     // Clear pending files and exit analysis mode immediately for better UX
     const filesToProcess = [...pendingFileIds];
@@ -401,6 +412,12 @@ export default function Index() {
             };
           });
           setCitationCards(citations);
+        }
+
+        // Handle Visual Render
+        if (result.data?.visual_payload) {
+          setVisualPayload(result.data.visual_payload);
+          setIsVisualPanelOpen(true);
         }
       }
 
@@ -519,6 +536,12 @@ export default function Index() {
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-background">
+      {/* Visual Render Panel */}
+      <VisualRenderPanel
+        isOpen={isVisualPanelOpen}
+        onClose={() => setIsVisualPanelOpen(false)}
+        payload={visualPayload}
+      />
       {/* Background gradient layers */}
       <div className="absolute inset-0 pointer-events-none">
         {/* Base radial gradient */}

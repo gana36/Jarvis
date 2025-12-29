@@ -36,7 +36,7 @@ class GeminiService:
         )
         logger.info("✓ Gemini Flash service initialized")
 
-    async def generate_response(self, user_message: str, profile: dict = None, history: list = None, memory_context: str = None, file_paths: List[str] = None) -> str:
+    async def generate_response(self, user_message: str, profile: dict = None, history: list = None, memory_context: str = None, file_paths: List[str] = None, visual: bool = False) -> str:
         """
         Generate a conversational response to user input.
         
@@ -88,7 +88,9 @@ class GeminiService:
                 memory_section = f"{memory_context}\n\n"
             
             # Construct prompt with personality, context, and memories
-            prompt = f"""You are Manas, a helpful and friendly personal AI assistant. You are concise, warm, and conversational. Respond naturally as if chatting with a friend. Keep responses brief (1-2 sentences).
+            brief_instruction = " Keep responses brief (1-2 sentences)." if not visual else " Provide a detailed, technical response with code blocks if requested. Use markdown for structure."
+            
+            prompt = f"""You are Manas, a helpful and friendly personal AI assistant. You are concise, warm, and conversational. Respond naturally as if chatting with a friend.{brief_instruction}
 
 IMPORTANT: When referencing the user's personal information below, use "your" (e.g., "your favorite color is blue"), never "my".
 
@@ -125,7 +127,7 @@ Manas:"""
                     "temperature": 0.7,
                     "top_p": 0.95,
                     "top_k": 40,
-                    "max_output_tokens": 120,  # Keep response short
+                    "max_output_tokens": 1024 if visual else 150,  # Larger for visual
                 }
             )
             
@@ -138,7 +140,7 @@ Manas:"""
             # Return friendly fallback response
             return "I'm having trouble thinking right now. Can you try again?"
 
-    async def generate_response_stream(self, user_message: str, profile: dict = None, history: list = None, file_paths: List[str] = None):
+    async def generate_response_stream(self, user_message: str, profile: dict = None, history: list = None, file_paths: List[str] = None, visual: bool = False):
         """
         Generate a conversational response with streaming, with optional profile context and history.
         
@@ -184,7 +186,9 @@ Manas:"""
                 history_context = "\n".join(history_lines) + "\n\n"
             
             # Construct prompt with personality and context
-            prompt = f"""You are Manas, a helpful and friendly personal AI assistant. You are concise, warm, and conversational. Respond naturally as if chatting with a friend. Keep responses brief (1-2 sentences).
+            brief_instruction = " Keep responses brief (1-2 sentences)." if not visual else " Provide a detailed, technical response with code blocks if requested. Use markdown for structure."
+            
+            prompt = f"""You are Manas, a helpful and friendly personal AI assistant. You are concise, warm, and conversational. Respond naturally as if chatting with a friend.{brief_instruction}
 
 
 Your capabilities: weather queries, task management (add/complete/update/delete tasks), calendar events (create/update/delete), daily summaries, task reminders, and general conversation.
@@ -219,7 +223,7 @@ Manas:"""
                     "temperature": 0.7,
                     "top_p": 0.95,
                     "top_k": 40,
-                    "max_output_tokens": 120,  # Keep response short
+                    "max_output_tokens": 1024 if visual else 150,  # Larger for visual
                 },
                 stream=True,  # Enable streaming
             )
@@ -278,7 +282,7 @@ Current date: {current_date} ({day_of_week})
 
 Input: "{user_message}"
 
-Intents: GET_WEATHER, ADD_TASK, COMPLETE_TASK, UPDATE_TASK, DELETE_TASK, LIST_TASKS, GET_TASK_REMINDERS, DAILY_SUMMARY, CREATE_CALENDAR_EVENT, UPDATE_CALENDAR_EVENT, DELETE_CALENDAR_EVENT, CHECK_EMAIL, SEARCH_EMAIL, READ_EMAIL, ANALYZE_EMAIL, SEARCH_RESTAURANTS, REMEMBER_THIS, RECALL_MEMORY, FORGET_THIS, LEARN, GET_NEWS, GENERAL_CHAT
+Intents: GET_WEATHER, ADD_TASK, COMPLETE_TASK, UPDATE_TASK, DELETE_TASK, LIST_TASKS, GET_TASK_REMINDERS, DAILY_SUMMARY, CREATE_CALENDAR_EVENT, UPDATE_CALENDAR_EVENT, DELETE_CALENDAR_EVENT, CHECK_EMAIL, SEARCH_EMAIL, READ_EMAIL, ANALYZE_EMAIL, SEARCH_RESTAURANTS, REMEMBER_THIS, RECALL_MEMORY, FORGET_THIS, LEARN, GET_NEWS, VISUAL_RENDER, GENERAL_CHAT
 
 For calendar intents, extract:
 - title: event name (clean, no articles)
@@ -376,6 +380,7 @@ Intents:
 - RECALL_MEMORY: user asks what you remember, "what do you know about me", "what did I tell you"
 - FORGET_THIS: user wants to delete a memory, "forget that", "delete memory"
 - GET_NEWS: latest news, breaking updates, "what's the news", news about [topic], daily briefing
+- VISUAL_RENDER: technical output, code generation, markdown creation, step-by-step documentation, "write code", "generate a script", "show me markdown", "render a document", "create a config"
 - GENERAL_CHAT: greetings, casual conversation, opinions
 
 Examples:
@@ -400,6 +405,10 @@ Examples:
 - "remember that my wife's birthday is March 15" → REMEMBER_THIS
 - "what do you know about my family?" → RECALL_MEMORY
 - "forget what I told you about my job" → FORGET_THIS
+- "write a python script" → VISUAL_RENDER
+- "write merge sort in c++" → VISUAL_RENDER
+- "generate a markdown document" → VISUAL_RENDER
+- "show me the steps for this" → VISUAL_RENDER
 - "hello" → GENERAL_CHAT
 
 Output format:

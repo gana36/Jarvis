@@ -362,7 +362,8 @@ class OrchestratorService:
             "FORGET_THIS": lambda t: self._handle_forget_this(t, user_id, history),
             "LEARN": lambda t: self._handle_learn(t, history, file_paths=file_paths),
             "GET_NEWS": lambda t: self._handle_news(t, history),
-            "DOC_ANALYSIS": lambda t: self._handle_doc_analysis(t, profile, history, user_id, file_paths)
+            "DOC_ANALYSIS": lambda t: self._handle_doc_analysis(t, profile, history, user_id, file_paths),
+            "VISUAL_RENDER": lambda t: self._handle_visual_render(t, profile, history, user_id, file_paths)
         }
         
         # Handle GENERAL_CHAT specially to pass history and user_id for memory context
@@ -373,8 +374,21 @@ class OrchestratorService:
             handler = handlers.get(intent, lambda t: self._handle_general_chat(t, profile, history, user_id, file_paths=file_paths))
             handler_response = await handler(transcript)
         
-        # Beautify the message for natural speech (skip for GENERAL_CHAT as it's already natural)
-        if "message" in handler_response and intent != "GENERAL_CHAT":
+        # Post-processing for VisualRenderIntent (Implicit trigger)
+        # If response contains code blocks, upgrade to VISUAL_RENDER
+        if intent in ["GENERAL_CHAT", "LEARN"] and "message" in handler_response:
+            if "```" in handler_response["message"]:
+                logger.info(f"Implicit visual payload detected in {intent}. Upgrading to VISUAL_RENDER.")
+                intent = "VISUAL_RENDER"
+                # Process visual payload
+                visual_data = self._process_visual_payload(handler_response["message"])
+                if "data" not in handler_response:
+                    handler_response["data"] = {}
+                handler_response["data"]["visual_payload"] = visual_data.get("visual_payload")
+                handler_response["message"] = visual_data.get("message", handler_response["message"])
+        
+        # Beautify the message for natural speech (skip for GENERAL_CHAT and VISUAL_RENDER)
+        if "message" in handler_response and intent not in ["GENERAL_CHAT", "VISUAL_RENDER"]:
             handler_response["message"] = await self._beautify_response(
                 handler_response["message"], 
                 intent
@@ -2734,7 +2748,7 @@ Resolved Subject (short):"""
                 "message": "I'm having trouble with my memory right now."
             }
 
-    async def _handle_general_chat(self, transcript: str, profile: Dict[str, Any] = None, history: list = None, user_id: str = None, file_paths: List[str] = None) -> Dict[str, Any]:
+    async def _handle_general_chat(self, transcript: str, profile: Dict[str, Any] = None, history: list = None, user_id: str = None, file_paths: List[str] = None, visual: bool = False) -> Dict[str, Any]:
         """
         Handle general conversation using Gemini AI with memory context.
         
@@ -2777,7 +2791,8 @@ Resolved Subject (short):"""
                 profile, 
                 history,
                 memory_context=memory_context,
-                file_paths=file_paths
+                file_paths=file_paths,
+                visual=visual
             )
             
             return {
@@ -2805,6 +2820,61 @@ Resolved Subject (short):"""
         focused_transcript = f"[SYSTEM: Analyze the provided document/image. Answer the user based ONLY on the content of the file(s).] {transcript}"
         
         return await self._handle_general_chat(focused_transcript, profile, history, user_id, file_paths)
+
+    async def _handle_visual_render(self, transcript: str, profile: Dict[str, Any] = None, history: list = None, user_id: str = None, file_paths: List[str] = None) -> Dict[str, Any]:
+        """Handle requests that require high-precision visual output."""
+        logger.info("Handler: VISUAL_RENDER")
+        
+        # System instruction to encourage structured output
+        focused_transcript = f"[SYSTEM: Provide a high-precision response with code, markdown, or structured text as appropriate. Use triple backticks (```) for code blocks.] {transcript}"
+        
+        # Get general chat response
+        handler_response = await self._handle_general_chat(focused_transcript, profile, history, user_id, file_paths, visual=True)
+        
+        if "message" in handler_response:
+            # Process visual payload
+            visual_data = self._process_visual_payload(handler_response["message"])
+            if "data" not in handler_response:
+                handler_response["data"] = {}
+            handler_response["data"]["visual_payload"] = visual_data.get("visual_payload")
+            handler_response["message"] = visual_data.get("message", handler_response["message"])
+            
+            # Ensure message (spoken summary) is short
+            if len(handler_response["message"]) > 150:
+                handler_response["message"] = await self._beautify_response(handler_response["message"], "VISUAL_RENDER")
+        
+        return handler_response
+
+    def _process_visual_payload(self, content: str) -> Dict[str, Any]:
+        """Extract visual_payload and spoken_summary from content."""
+        import re
+        
+        # Find all triple backtick blocks
+        blocks = re.findall(r"```[\s\S]*?```", content)
+        
+        if not blocks:
+            return {"visual_payload": None}
+            
+        # visual_payload is the concatenation of all blocks (or just the first one if preferred)
+        # We'll include the backticks so the frontend can render it as markdown
+        visual_payload = "\n\n".join(blocks)
+        
+        # Remove blocks from content to get spoken summary
+        spoken_summary = content
+        for block in blocks:
+            spoken_summary = spoken_summary.replace(block, "")
+        
+        # Clean up extra newlines in summary
+        spoken_summary = re.sub(r"\n+", " ", spoken_summary).strip()
+        
+        # Fallback if summary is too short or empty
+        if len(spoken_summary) < 10:
+            spoken_summary = "I've generated that content for you. You can see it in the panel."
+            
+        return {
+            "message": spoken_summary, # Override original message with short summary
+            "visual_payload": visual_payload
+        }
 
 @lru_cache
 def get_orchestrator() -> OrchestratorService:

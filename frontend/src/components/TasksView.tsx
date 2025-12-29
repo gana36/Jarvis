@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { ArrowLeft, Plus, Trash2, Check, X } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, Check } from 'lucide-react';
 import { tasksAPI } from '@/services/api';
 import type { Task, CreateTaskRequest } from '@/types/api';
 
@@ -85,25 +85,22 @@ export function TasksView({ onBack }: TasksViewProps) {
         <div className="flex gap-2 mb-6">
           <button
             onClick={() => setFilter('')}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              filter === '' ? 'bg-primary text-primary-foreground' : 'glass-panel text-foreground'
-            }`}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${filter === '' ? 'bg-primary text-primary-foreground' : 'glass-panel text-foreground'
+              }`}
           >
             All
           </button>
           <button
             onClick={() => setFilter('pending')}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              filter === 'pending' ? 'bg-primary text-primary-foreground' : 'glass-panel text-foreground'
-            }`}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${filter === 'pending' ? 'bg-primary text-primary-foreground' : 'glass-panel text-foreground'
+              }`}
           >
             Pending
           </button>
           <button
             onClick={() => setFilter('completed')}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              filter === 'completed' ? 'bg-primary text-primary-foreground' : 'glass-panel text-foreground'
-            }`}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${filter === 'completed' ? 'bg-primary text-primary-foreground' : 'glass-panel text-foreground'
+              }`}
           >
             Completed
           </button>
@@ -152,22 +149,20 @@ export function TasksView({ onBack }: TasksViewProps) {
                 <div className="flex items-center gap-3">
                   <button
                     onClick={() => handleToggleStatus(task)}
-                    className={`flex-shrink-0 w-6 h-6 rounded border-2 flex items-center justify-center transition-colors ${
-                      task.status === 'completed'
+                    className={`flex-shrink-0 w-6 h-6 rounded border-2 flex items-center justify-center transition-colors ${task.status === 'completed'
                         ? 'bg-primary border-primary'
                         : 'border-muted-foreground'
-                    }`}
+                      }`}
                   >
                     {task.status === 'completed' && <Check size={14} className="text-primary-foreground" />}
                   </button>
-                  
+
                   <div className="flex-1 min-w-0">
                     <p
-                      className={`text-sm font-medium ${
-                        task.status === 'completed'
+                      className={`text-sm font-medium ${task.status === 'completed'
                           ? 'text-muted-foreground line-through'
                           : 'text-foreground'
-                      }`}
+                        }`}
                     >
                       {task.title}
                     </p>
@@ -180,13 +175,12 @@ export function TasksView({ onBack }: TasksViewProps) {
 
                   {task.priority && (
                     <span
-                      className={`text-xs px-2 py-1 rounded ${
-                        task.priority === 'high'
+                      className={`text-xs px-2 py-1 rounded ${task.priority === 'high'
                           ? 'bg-destructive/20 text-destructive'
                           : task.priority === 'medium'
-                          ? 'bg-accent/20 text-accent'
-                          : 'bg-muted/30 text-muted-foreground'
-                      }`}
+                            ? 'bg-accent/20 text-accent'
+                            : 'bg-muted/30 text-muted-foreground'
+                        }`}
                     >
                       {task.priority}
                     </span>
