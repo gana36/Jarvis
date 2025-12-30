@@ -27,9 +27,19 @@ app = FastAPI(
 )
 
 # CORS middleware for frontend
+# Get allowed origins from environment or use defaults
+allowed_origins = os.getenv("ALLOWED_ORIGINS", "").split(",") if os.getenv("ALLOWED_ORIGINS") else []
+# Always allow these origins
+default_origins = [
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "https://jarvis-frontend-536654469522.us-central1.run.app",
+]
+all_origins = list(set(default_origins + [o.strip() for o in allowed_origins if o.strip()]))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:5174"],
+    allow_origins=all_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

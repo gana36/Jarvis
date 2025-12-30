@@ -11,7 +11,11 @@ import type {
 } from '@/types/api';
 import { auth } from '@/config/firebase';
 
-const API_BASE_URL = 'http://localhost:8000/api';
+// Use environment variable for production, fallback to localhost for development
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
+
+// Export for use in other files
+export { API_BASE_URL };
 
 // Helper to get auth token
 async function getAuthToken(): Promise<string | null> {

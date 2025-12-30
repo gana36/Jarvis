@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { API_BASE_URL } from '@/services/api';
 
 interface Voice {
     id: string;
@@ -29,7 +30,7 @@ export default function ChatInput() {
     useEffect(() => {
         const loadVoices = async () => {
             try {
-                const response = await fetch('http://localhost:8000/api/profile/voices');
+                const response = await fetch(`${API_BASE_URL}/profile/voices`);
                 if (!response.ok) throw new Error('Failed to fetch voices');
 
                 const data = await response.json();

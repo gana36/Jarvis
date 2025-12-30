@@ -1,0 +1,26 @@
+# Dependencies
+node_modules
+
+# Git
+.git
+.gitignore
+
+# Build outputs (we build in Docker)
+dist
+
+# Environment files (keep .env.production for build)
+.env
+.env.local
+.env.development
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Misc
+*.log
+*.md
+.DS_Store
+Thumbs.db

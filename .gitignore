@@ -65,3 +65,6 @@ fitbit_token.json
 
 jarvis
 backend/app/certs.json
+backend/app/calendar_token.json
+backend/app/fitbit_token.json
+frontend/.env.production

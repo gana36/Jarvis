@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react';
 import { ArrowLeft, Save, Calendar, ExternalLink, CheckCircle, Mail, Activity } from 'lucide-react';
-import { profileAPI, calendarAPI } from '@/services/api';
+import { profileAPI, calendarAPI, API_BASE_URL } from '@/services/api';
+
+// Get base URL without /api suffix for auth endpoints
+const AUTH_BASE_URL = API_BASE_URL.replace('/api', '');
 import { useAuth } from '@/contexts/AuthContext';
 import type { Profile, ProfileUpdate, Voice } from '@/types/api';
 
@@ -70,7 +73,7 @@ export function ProfileView({ onBack }: ProfileViewProps) {
   const loadGmailStatus = async () => {
     try {
       const userId = currentUser?.uid || 'default';
-      const response = await fetch(`http://localhost:8000/auth/gmail/status?user_id=${userId}`);
+      const response = await fetch(`${AUTH_BASE_URL}/auth/gmail/status?user_id=${userId}`);
       if (response.ok) {
         const status = await response.json();
         setGmailStatus(status);
@@ -82,7 +85,7 @@ export function ProfileView({ onBack }: ProfileViewProps) {
 
   const loadFitbitStatus = async () => {
     try {
-      const response = await fetch('http://localhost:8000/auth/fitbit/status');
+      const response = await fetch(`${AUTH_BASE_URL}/auth/fitbit/status`);
       if (response.ok) {
         const status = await response.json();
         setFitbitStatus(status);
@@ -116,14 +119,14 @@ export function ProfileView({ onBack }: ProfileViewProps) {
   const handleConnectGmail = () => {
     // Open Gmail OAuth in popup
     const userId = currentUser?.uid || 'default';
-    const url = `http://localhost:8000/auth/google/gmail?user_id=${userId}`;
+    const url = `${AUTH_BASE_URL}/auth/google/gmail?user_id=${userId}`;
     window.open(url, '_blank', 'width=600,height=700');
 
     // Poll for status update
     const interval = setInterval(async () => {
       try {
         const uid = currentUser?.uid || 'default';
-        const response = await fetch(`http://localhost:8000/auth/gmail/status?user_id=${uid}`);
+        const response = await fetch(`${AUTH_BASE_URL}/auth/gmail/status?user_id=${uid}`);
         if (response.ok) {
           const status = await response.json();
           setGmailStatus(status);
@@ -142,13 +145,13 @@ export function ProfileView({ onBack }: ProfileViewProps) {
 
   const handleConnectFitbit = () => {
     // Open Fitbit OAuth in popup
-    const url = 'http://localhost:8000/auth/fitbit';
+    const url = `${AUTH_BASE_URL}/auth/fitbit`;
     window.open(url, '_blank', 'width=600,height=700');
 
     // Poll for status update
     const interval = setInterval(async () => {
       try {
-        const response = await fetch('http://localhost:8000/auth/fitbit/status');
+        const response = await fetch(`${AUTH_BASE_URL}/auth/fitbit/status`);
         if (response.ok) {
           const status = await response.json();
           setFitbitStatus(status);
