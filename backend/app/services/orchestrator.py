@@ -349,8 +349,8 @@ class OrchestratorService:
             "LIST_TASKS": lambda t: self._handle_list_tasks(t, user_id, history),
             "GET_TASK_REMINDERS": lambda t: self._handle_get_task_reminders(t, user_id, history),
             "DAILY_SUMMARY": lambda t: self._handle_daily_summary(t, user_id, history),
-            "CREATE_CALENDAR_EVENT": lambda t: self._handle_create_calendar_event(t, user_id, history),
-            "UPDATE_CALENDAR_EVENT": lambda t: self._handle_update_calendar_event(t, user_id, history),
+            "CREATE_CALENDAR_EVENT": lambda t: self._handle_create_calendar_event(t, user_id, history, profile),
+            "UPDATE_CALENDAR_EVENT": lambda t: self._handle_update_calendar_event(t, user_id, history, profile),
             "DELETE_CALENDAR_EVENT": lambda t: self._handle_delete_calendar_event(t, user_id, history),
             "CHECK_EMAIL": lambda t: self._handle_check_email(t, user_id, history),
             "SEARCH_EMAIL": lambda t: self._handle_search_email(t, user_id, history),
@@ -1366,13 +1366,15 @@ Resolved Request (include the date mentioned in history):"""
             "message": "Today you completed 5 tasks and attended 2 meetings. Great progress!",
         }
 
-    async def _handle_create_calendar_event(self, transcript: str, user_id: str = "default", history: list = None) -> Dict[str, Any]:
+    async def _handle_create_calendar_event(self, transcript: str, user_id: str = "default", history: list = None, profile: Dict[str, Any] = None) -> Dict[str, Any]:
         """
         Handle calendar event creation requests.
         
         Args:
             transcript: User's create request
             user_id: User identifier for data isolation
+            history: Conversation history
+            profile: User profile with timezone info
             
         Returns:
             Creation confirmation or error
@@ -1382,33 +1384,44 @@ Resolved Request (include the date mentioned in history):"""
         try:
             from app.services.calendar_tool import get_calendar_tool
             from datetime import datetime, timedelta
+            import pytz
+            
+            # Get user's timezone from profile
+            user_timezone = profile.get('timezone', 'America/New_York') if profile else 'America/New_York'
             
             calendar_tool = get_calendar_tool(user_id=user_id)
             
-            # Step 2: Extract event details using dedicated method
+            # Step 2: Extract event details using dedicated method with timezone
             logger.info(f"Extracting event details from: {transcript}")
-            details = await self.gemini_service.extract_calendar_event(transcript)
+            details = await self.gemini_service.extract_calendar_event(transcript, history, timezone=user_timezone)
             
             summary = details.get('title', 'New Event')
             hour = details.get('hour', datetime.now().hour + 1)
             minute = details.get('minute', 0)
             duration_minutes = details.get('duration', 60)  # Default 1 hour
             
-            # Parse date (supports "today", "tomorrow", "2025-12-21", etc.)
+            # Parse date using user's timezone
             event_date_str = details.get('date')
-            now = datetime.now()
+            
+            try:
+                user_tz = pytz.timezone(user_timezone)
+            except pytz.UnknownTimeZoneError:
+                user_tz = pytz.timezone('America/New_York')
+            
+            now = datetime.now(user_tz)
             
             if event_date_str:
                 try:
-                    # Parse ISO date format
+                    # Parse ISO date format and localize to user's timezone
                     event_date = datetime.fromisoformat(event_date_str)
-                    start_time = event_date.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                    # Create start_time with the extracted date and time, in user's timezone
+                    start_time = user_tz.localize(event_date.replace(hour=hour, minute=minute, second=0, microsecond=0))
                 except:
                     # Fallback to today
                     logger.warning(f"Could not parse date '{event_date_str}', using today")
                     start_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
             else:
-                # No date specified, use today
+                # No date specified, use today (already in user's timezone)
                 start_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
             
             # If time is in the past (and no explicit date), assume next day
@@ -1419,13 +1432,12 @@ Resolved Request (include the date mentioned in history):"""
             end_time = start_time + timedelta(minutes=duration_minutes)
             
             # Format for Google Calendar API (ISO format with timezone)
-            # Use timezone-aware datetime
-            from datetime import timezone, timedelta as td
+            # Use user's timezone, not server timezone (which is UTC on Cloud Run)
             
-            # Get local timezone offset
-            local_tz_offset = datetime.now().astimezone().strftime('%z')
+            # Get UTC offset from the user's timezone
+            tz_offset = now.strftime('%z')  # now is already in user's timezone from line 1411
             # Format: -0500 -> -05:00
-            tz_formatted = f"{local_tz_offset[:3]}:{local_tz_offset[3:]}"
+            tz_formatted = f"{tz_offset[:3]}:{tz_offset[3:]}"
             
             start_iso = start_time.strftime(f"%Y-%m-%dT%H:%M:%S{tz_formatted}")
             end_iso = end_time.strftime(f"%Y-%m-%dT%H:%M:%S{tz_formatted}")
@@ -1461,13 +1473,15 @@ Resolved Request (include the date mentioned in history):"""
                 "message": "I had trouble creating that calendar event. Please try again."
             }
 
-    async def _handle_update_calendar_event(self, transcript: str, user_id: str = "default", history: list = None) -> Dict[str, Any]:
+    async def _handle_update_calendar_event(self, transcript: str, user_id: str = "default", history: list = None, profile: Dict[str, Any] = None) -> Dict[str, Any]:
         """
         Handle calendar event update requests.
         
         Args:
             transcript: User's update request
             user_id: User identifier for data isolation
+            history: Conversation history
+            profile: User profile with timezone info
             
         Returns:
             Update confirmation or error

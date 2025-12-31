@@ -23,9 +23,9 @@ class GeminiService:
         """
         genai.configure(api_key=api_key)
         
-        # Configure model for speed - use Gemini 2.5 Flash (latest stable)
+        # Configure model for speed - use Gemini 2.0 Flash (stable, higher limits)
         self.model = genai.GenerativeModel(
-            model_name="models/gemini-2.0-flash-exp",
+            model_name="models/gemini-2.0-flash",
             # Minimal safety settings for speed
             safety_settings={
                 HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
@@ -238,13 +238,15 @@ Manas:"""
             logger.error(f"Gemini streaming error: {e}")
             yield "I'm having trouble thinking right now."
 
-    async def classify_and_extract(self, user_message: str, history: list = None) -> dict:
+    async def classify_and_extract(self, user_message: str, history: list = None, timezone: str = None) -> dict:
         """
         Classify intent AND extract relevant details in a single LLM call.
         
         Args:
             user_message: User's message
             history: Optional conversation history for context
+            timezone: Optional user timezone for date/time parsing (e.g., 'America/New_York')
+
             
         Returns:
             Dict with 'intent', 'confidence', and 'details' (null for simple intents)
@@ -256,9 +258,17 @@ Manas:"""
         """
         try:
             from datetime import datetime
+            import pytz
             
-            # Get current context
-            now = datetime.now()
+            # Get current context in user's timezone (Cloud Run uses UTC by default)
+            # Use timezone from profile, fallback to America/New_York if not set
+            tz_name = timezone or 'America/New_York'
+            try:
+                user_tz = pytz.timezone(tz_name)
+            except pytz.UnknownTimeZoneError:
+                user_tz = pytz.timezone('America/New_York')
+            
+            now = datetime.now(user_tz)
             current_time = now.strftime("%I:%M %p")
             current_date = now.strftime("%Y-%m-%d")
             day_of_week = now.strftime("%A")
@@ -442,13 +452,14 @@ Output format:
             # Fallback to generic chat
             return {"intent": "GENERAL_CHAT", "confidence": 0.5}
 
-    async def extract_calendar_event(self, user_message: str, history: list = None) -> dict:
+    async def extract_calendar_event(self, user_message: str, history: list = None, timezone: str = None) -> dict:
         """
         Extract calendar event details from natural language.
         
         Args:
             user_message: User's request (e.g., "create movie event at 6pm today")
             history: Optional conversation history for context
+            timezone: Optional user timezone for date/time parsing
             
         Returns:
             Dict with 'title', 'hour', 'minute', 'am_pm' fields
@@ -456,9 +467,16 @@ Output format:
         """
         try:
             from datetime import datetime
+            import pytz
             
-            # Get current time for context
-            now = datetime.now()
+            # Get current time in user's timezone
+            tz_name = timezone or 'America/New_York'
+            try:
+                user_tz = pytz.timezone(tz_name)
+            except pytz.UnknownTimeZoneError:
+                user_tz = pytz.timezone('America/New_York')
+            
+            now = datetime.now(user_tz)
             current_time = now.strftime("%I:%M %p")
             current_date = now.strftime("%Y-%m-%d")
             
